@@ -1,6 +1,9 @@
 # Idea
 .idea/
 
+# Database file
+resources/citizens.db
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
