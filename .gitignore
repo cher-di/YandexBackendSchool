@@ -2,7 +2,7 @@
 .idea/
 
 # Database file
-resources/citizens.db
+*.db
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
