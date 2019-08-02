@@ -40,7 +40,8 @@ class DBHelper(metaclass=Singleton):
                 name TEXT NOT NULL,
                 birth_date TEXT NOT NULL,
                 gender TEXT NOT NULL CHECK(gender IN ('male', 'female')),
-                CONSTRAINT citizens_fk FOREIGN KEY (import_id) REFERENCES imports(import_id)
+                CONSTRAINT citizens_fk FOREIGN KEY (import_id) REFERENCES imports(import_id),
+                CONSTRAINT citizens_uk UNIQUE (import_id, citizen_id)
             );
                 
             CREATE TABLE  relatives(
@@ -60,12 +61,12 @@ class DBHelper(metaclass=Singleton):
 
     def import_citizens(self, citizens: list) -> int:
         # check relatives
-        relatives = dict()
+        relatives_ids = dict()
         for citizen in citizens:
-            relatives[citizen['citizen_id']] = citizen['relatives']
-        for citizen, citizen_relatives in relatives.items():
-            for relative in citizen_relatives:
-                if citizen not in relatives[relative]:
+            relatives_ids[citizen['citizen_id']] = citizen['relatives']
+        for citizen_id, citizen_relatives_ids in relatives_ids.items():
+            for relative_id in citizen_relatives_ids:
+                if citizen_id not in relatives_ids[relative_id] or citizen_id == relative_id:
                     raise ValueError
 
         # INSERT import
@@ -80,24 +81,21 @@ class DBHelper(metaclass=Singleton):
         try:
             # INSERT citizens
             for citizen in citizens:
+                citizen['import_id'] = import_id
+                citizen['birth_date'] = datetime.datetime.strptime(citizen['birth_date'], "%d.%m.%Y").strftime("%Y-%m-%d")
                 cursor.execute(
                     "INSERT INTO citizens (import_id, citizen_id, town, street, building, apartment, name, birth_date, gender)"
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);", (import_id, citizen['citizen_id'], citizen['town'],
-                                                            citizen['street'], citizen['building'],
-                                                            citizen['apartment'], citizen['name'],
-                                                            datetime.datetime.strptime(citizen['birth_date'],
-                                                                                       "%d.%m.%Y").strftime("%Y-%m-%d"),
-                                                            citizen['gender']))
+                    "VALUES (:import_id, :citizen_id, :town, :street, :building, :apartment, :name, :birth_date, :gender);", citizen)
 
             # INSERT relatives
             worked_relatives = set()
             for citizen in citizens:
-                for relative in citizen['relatives']:
-                    if relative not in worked_relatives:
+                for relative_id in citizen['relatives']:
+                    if relative_id not in worked_relatives:
                         cursor.execute(
                             "INSERT INTO relatives (id1, id2) SELECT c1.id, c2.id FROM citizens c1, citizens c2 "
                             "WHERE c1.import_id = ? AND c1.citizen_id = ? AND c2.import_id = ? AND c2.citizen_id = ?;",
-                            (import_id, citizen['citizen_id'], import_id, relative))
+                            (import_id, citizen['citizen_id'], import_id, relative_id))
                 worked_relatives.add(citizen['citizen_id'])
         except Exception as e:
             conn.rollback()
@@ -108,3 +106,27 @@ class DBHelper(metaclass=Singleton):
         finally:
             cursor.close()
             conn.close()
+
+    def get_imported_citizens(self, import_id: int) -> list:
+        conn = sqlite3.connect(self.DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT id, citizen_id, town, street, building, apartment, name, birth_date, gender "
+                       "FROM citizens WHERE import_id = ?;", (import_id,))
+        citizens_data = cursor.fetchall()
+        if not citizens_data:
+            raise ValueError
+        else:
+            keys = ('id', 'citizen_id', 'town', 'street', 'building', 'apartment', 'name', 'birth_date', 'gender')
+            citizens = [dict(zip(keys, values)) for values in citizens_data]
+            for citizen in citizens:
+                citizen['birth_date'] = datetime.datetime.strptime(citizen['birth_date'], "%Y-%m-%d").strftime("%d.%m.%Y")
+                cursor.execute("SELECT c.citizen_id FROM citizens c, relatives r "
+                               "WHERE r.id1 = :id AND r.id2 = c.id "
+                               "UNION "
+                               "SELECT c.citizen_id FROM citizens c, relatives r "
+                               "WHERE r.id1 = c.id AND r.id2 = :id;", {'id': citizen['id']})
+                citizen['relatives'] = [relative[0] for relative in cursor.fetchall()]
+                citizen.pop('id')
+        return citizens
+
