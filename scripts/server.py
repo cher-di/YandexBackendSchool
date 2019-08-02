@@ -6,10 +6,6 @@ app = Flask(__name__)
 db_helper: DBHelper
 
 
-class JSONResponse(Response):
-    default_mimetype = 'application/json'
-
-
 @app.route('/imports', methods=['POST'])
 def import_data():
     try:
@@ -24,7 +20,9 @@ def import_data():
     except DatabaseError as e:
         return Response(response="{}: {}".format(e.__class__.__name__, e), status=400)
     else:
-        return JSONResponse(response=json.dumps({"data": {"import_id": import_id}}), status=201)
+        return Response(response=json.dumps({"data": {"import_id": import_id}}),
+                        status=201,
+                        mimetype='application/json')
 
 
 @app.route('/imports/<int:import_id>/citizens/<int:citizen_id>', methods=['PATCH'])
@@ -39,7 +37,9 @@ def get_citizens_data(import_id):
     except ValueError:
         return Response(response="Unknown import_id", status=400)
     else:
-        return JSONResponse(response=json.dumps({"data": citizens}), status=200)
+        return Response(response=json.dumps({"data": citizens}),
+                        status=200,
+                        mimetype='application/json')
 
 
 @app.route('/imports/<int:import_id>/citizens/birthdays', methods=['GET'])
