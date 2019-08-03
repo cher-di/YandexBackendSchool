@@ -62,6 +62,26 @@ class DBHelper(metaclass=Singleton):
         self._conn: sqlite3.Connection
         self._conn = None
 
+    def verify_citizen_data_types(self, citizen_data: dict) -> bool:
+        integer_keys = ('import_id', 'citizen_id', 'apartment')
+        string_keys = ('town', 'street', 'building', 'name', 'birth_date', 'gender')
+
+        for key in integer_keys:
+            try:
+                if not isinstance(citizen_data[key], int):
+                    return False
+            except KeyError:
+                pass
+
+        for key in string_keys:
+            try:
+                if not isinstance(citizen_data[key], str):
+                    return False
+            except KeyError:
+                pass
+
+        return True
+
     def import_citizens(self, citizens: list) -> int:
         # check relatives
         relatives_ids = dict()
@@ -87,6 +107,8 @@ class DBHelper(metaclass=Singleton):
                 citizen['import_id'] = import_id
                 citizen['birth_date'] = datetime.datetime.strptime(citizen['birth_date'], "%d.%m.%Y").strftime(
                     "%Y-%m-%d")
+                if not self.verify_citizen_data_types(citizen):
+                    raise TypeError
                 cursor.execute(
                     "INSERT INTO citizens (import_id, citizen_id, town, street, building, apartment, name, birth_date, gender)"
                     "VALUES (:import_id, :citizen_id, :town, :street, :building, :apartment, :name, :birth_date, :gender);",
@@ -137,12 +159,14 @@ class DBHelper(metaclass=Singleton):
         return citizens
 
     def change_citizen_data(self, import_id: int, citizen_id: int, patch_citizen_data: dict) -> dict:
-
         template_citizen_data_keys = {'citizen_id', 'town', 'street', 'building', 'apartment', 'name', 'birth_date',
                                       'gender', 'relatives'}
         patch_citizen_data_keys = set(patch_citizen_data.keys())
         if not patch_citizen_data_keys <= template_citizen_data_keys or 'citizen_id' in patch_citizen_data_keys:
-            raise ValueError
+            raise KeyError
+
+        if not self.verify_citizen_data_types(patch_citizen_data):
+            raise TypeError
 
         try:
             patch_citizen_data['birth_date'] = datetime.datetime.strptime(
@@ -158,58 +182,56 @@ class DBHelper(metaclass=Singleton):
         try:
             conn = sqlite3.connect(self.DB_PATH)
             cursor = conn.cursor()
-            for key, value in patch_citizen_data.items():
-                cursor.execute("UPDATE citizens SET {}=? WHERE import_id = ? AND citizen_id = ?;".
-                               format(key), (value, import_id, citizen_id))
-            if not cursor.rowcount:
+
+            cursor.execute("SELECT id FROM citizens WHERE import_id = ? AND citizen_id = ?;", (import_id, citizen_id))
+            try:
+                citizen_db_id = cursor.fetchone()[0]
+            except TypeError:
                 raise ValueError
 
+            for key, value in patch_citizen_data.items():
+                cursor.execute("UPDATE citizens SET {}=? WHERE id = ?;".format(key), (value, citizen_db_id))
+
             if new_relatives is not None:
-                cursor.execute("SELECT c2.id FROM citizens c1, citizens c2, relatives r "
-                               "WHERE r.id1 = c1.id AND r.id2 = c2.id AND "
-                               "c1.import_id = :import_id AND c1.citizen_id = :citizen_id "
-                               "UNION "
-                               "SELECT c2.id FROM citizens c1, citizens c2, relatives r "
-                               "WHERE r.id1 = c2.id AND r.id2 = c1.id AND "
-                               "c1.import_id = :import_id AND c2.citizen_id = :citizen_id;", {'import_id': import_id,
-                                                                                              'citizen_id': citizen_id})
-                old_relatives = [relative[0] for relative in cursor.fetchall()]
+                if citizen_id in new_relatives:
+                    raise ValueError
 
+                cursor.execute("SELECT c.id FROM citizens c, relatives r "
+                               "WHERE r.id1 = :id AND r.id2 = c.id OR r.id1 = c.id AND r.id2 = :id;",
+                               {'id': citizen_db_id})
+                old_relatives_db_id = [relative[0] for relative in cursor.fetchall()]
+
+                new_relatives_db_id = list()
                 for relative in new_relatives:
-                    cursor.execute("SELECT id FROM citizens WHERE import_id = ? AND citizen_id = ?;", (import_id, relative))
-                new_relatives = [relative[0] for relative in cursor.fetchall()]
-
-                cursor.execute("SELECT id FROM citizens WHERE import_id = ? AND citizen_id = ?;", (import_id, citizen_id))
-                citizen = cursor.fetchone()[0]
+                    cursor.execute("SELECT id FROM citizens WHERE import_id = ? AND citizen_id = ?;",
+                                   (import_id, relative))
+                    new_relatives_db_id.append(cursor.fetchone()[0])
 
                 # delete old deleted relative
-                for relative in set(old_relatives) - (set(new_relatives) & set(old_relatives)):
-                    cursor.execute("DELETE FROM relatives WHERE id1 = :citizen AND id2 = :relative OR "
-                                   "id1 = :relative AND id2 = :citizen;", {'citizen': citizen,
-                                                                           'relative': relative})
+                for relative_db_id in set(old_relatives_db_id) - (set(new_relatives_db_id) & set(old_relatives_db_id)):
+                    cursor.execute("DELETE FROM relatives WHERE id1 = :citizen_db_id AND id2 = :relative_db_id OR "
+                                   "id1 = :relative_db_id AND id2 = :citizen_db_id;",
+                                   {'citizen_db_id': citizen_db_id, 'relative_db_id': relative_db_id})
 
                 # add new added relatives
-                for relative in set(new_relatives) - (set(new_relatives) & set(old_relatives)):
-                    cursor.execute("INSERT INTO relatives VALUES (?, ?);", (citizen, relative))
+                for relative_db_id in set(new_relatives_db_id) - (set(new_relatives_db_id) & set(old_relatives_db_id)):
+                    cursor.execute("INSERT INTO relatives VALUES (?, ?);", (citizen_db_id, relative_db_id))
 
         except Exception as e:
             conn.rollback()
             raise e
         else:
             conn.commit()
-            cursor.execute("SELECT id, citizen_id, town, street, building, apartment, name, birth_date, gender "
-                           "FROM citizens WHERE import_id = ? AND citizen_id = ?;", (import_id, citizen_id))
-            keys = ('id', 'citizen_id', 'town', 'street', 'building', 'apartment', 'name', 'birth_date', 'gender')
+            cursor.execute("SELECT citizen_id, town, street, building, apartment, name, birth_date, gender "
+                           "FROM citizens WHERE id = ?;", (citizen_db_id, ))
+            keys = ('citizen_id', 'town', 'street', 'building', 'apartment', 'name', 'birth_date', 'gender')
             citizen_data = dict(zip(keys, cursor.fetchone()))
             citizen_data['birth_date'] = datetime.datetime.strptime(citizen_data['birth_date'], "%Y-%m-%d").strftime(
                 "%d.%m.%Y")
             cursor.execute("SELECT c.citizen_id FROM citizens c, relatives r "
-                           "WHERE r.id1 = :id AND r.id2 = c.id "
-                           "UNION "
-                           "SELECT c.citizen_id FROM citizens c, relatives r "
-                           "WHERE r.id1 = c.id AND r.id2 = :id;", {'id': citizen_data['id']})
+                           "WHERE r.id1 = :id AND r.id2 = c.id OR r.id1 = c.id AND r.id2 = :id;",
+                           {'id': citizen_db_id})
             citizen_data['relatives'] = [relative[0] for relative in cursor.fetchall()]
-            citizen_data.pop('id')
             return citizen_data
         finally:
             cursor.close()

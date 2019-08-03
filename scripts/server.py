@@ -29,9 +29,11 @@ def import_data():
 def change_citizen_data(import_id, citizen_id):
     try:
         citizen_data = db_helper.change_citizen_data(import_id, citizen_id, request.json)
-    except ValueError:
-        return Response(response="Bad json keys", status=400)
-    except DatabaseError as e:
+    except TypeError as e:
+        return Response(response="Bad data types: {}".format(e), status=400)
+    except KeyError as e:
+        return Response(response="Bad json keys: {}".format(e), status=400)
+    except (DatabaseError, ValueError) as e:
         return Response(response="Bad data: {}".format(e), status=400)
     else:
         return Response(response=json.dumps({"data": citizen_data}),
