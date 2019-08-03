@@ -27,7 +27,16 @@ def import_data():
 
 @app.route('/imports/<int:import_id>/citizens/<int:citizen_id>', methods=['PATCH'])
 def change_citizen_data(import_id, citizen_id):
-    pass
+    try:
+        citizen_data = db_helper.change_citizen_data(import_id, citizen_id, request.json)
+    except ValueError:
+        return Response(response="Bad json keys", status=400)
+    except DatabaseError as e:
+        return Response(response="Bad data: {}".format(e), status=400)
+    else:
+        return Response(response=json.dumps({"data": citizen_data}),
+                        status=200,
+                        mimetype='application/json')
 
 
 @app.route('/imports/<int:import_id>/citizens', methods=['GET'])
