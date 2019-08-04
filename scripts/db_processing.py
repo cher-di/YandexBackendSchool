@@ -323,5 +323,7 @@ class DBHelper(metaclass=Singleton):
             keys = ["town"] + ["p" + str(count_percentile) for count_percentile in percentiles]
             values = [town] + age_percentiles
             town_stat.append(dict(zip(keys, values)))
+        cursor.close()
+        conn.close()
 
         return town_stat
