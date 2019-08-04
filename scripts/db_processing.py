@@ -1,7 +1,8 @@
 import sqlite3
 import os
-from datetime import datetime
+import datetime
 from collections import defaultdict
+from numpy import percentile
 
 
 class Singleton(type):
@@ -114,11 +115,11 @@ class DBHelper(metaclass=Singleton):
 
     @staticmethod
     def json_date_to_sqlite_date(date: str) -> str:
-        return datetime.strptime(date, "%d.%m.%Y").strftime("%Y-%m-%d")
+        return datetime.datetime.strptime(date, "%d.%m.%Y").strftime("%Y-%m-%d")
 
     @staticmethod
     def sqlite_date_to_json_date(date: str) -> str:
-        return datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+        return datetime.datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
 
     def import_citizens(self, citizens: list) -> int:
         # check relatives
@@ -134,7 +135,7 @@ class DBHelper(metaclass=Singleton):
         conn = sqlite3.connect(self.DB_PATH)
         cursor = conn.cursor()
         cursor.execute("INSERT INTO imports (import_time) VALUES (?);",
-                       (datetime.now().isoformat(' ', 'milliseconds'),))
+                       (datetime.datetime.now().isoformat(' ', 'milliseconds'),))
         import_rowid = cursor.lastrowid
         cursor.execute("SELECT import_id FROM imports WHERE ROWID=?;", (import_rowid,))
         import_id = cursor.fetchone()[0]
@@ -287,7 +288,7 @@ class DBHelper(metaclass=Singleton):
                            "SELECT id2 FROM relatives WHERE id1 = :id;", {"id": citizen_db_id})
             relatives_db_id = [relative_db_id[0] for relative_db_id in cursor.fetchall()]
             for relative_db_id in relatives_db_id:
-                relative_birth_date = datetime.strptime(citizens[relative_db_id]['birth_date'], "%Y-%m-%d")
+                relative_birth_date = datetime.datetime.strptime(citizens[relative_db_id]['birth_date'], "%Y-%m-%d")
                 presents_num_per_month[relative_birth_date.month][citizens[citizen_db_id]['citizen_id']] += 1
         cursor.close()
         conn.close()
@@ -298,3 +299,29 @@ class DBHelper(metaclass=Singleton):
                                                           'presents': presents_num_per_month[month][citizen_id]}
                                                          for citizen_id in presents_num_per_month[month].keys()]
         return presents_num_per_month_result
+
+    @staticmethod
+    def calculate_age(born: str) -> int:
+        born = datetime.datetime.strptime(born, "%Y-%m-%d").date()
+        today = datetime.date.today()
+        return today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+
+    def get_town_stat(self, import_id: int) -> list:
+        if not self.verify_import_id(import_id):
+            raise ValueError
+
+        conn = sqlite3.connect(self.DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT town FROM citizens WHERE import_id = ?;", (import_id,))
+        towns = [town[0] for town in cursor.fetchall()]
+        percentiles = (50, 75, 99)
+        town_stat = list()
+        for town in towns:
+            cursor.execute("SELECT birth_date FROM citizens WHERE import_id = ? AND town = ?;", (import_id, town))
+            ages = [self.calculate_age(birth_date[0]) for birth_date in cursor.fetchall()]
+            age_percentiles = [int(age_percentile) + 1 for age_percentile in percentile(ages, percentiles)]
+            keys = ["town"] + ["p" + str(count_percentile) for count_percentile in percentiles]
+            values = [town] + age_percentiles
+            town_stat.append(dict(zip(keys, values)))
+
+        return town_stat

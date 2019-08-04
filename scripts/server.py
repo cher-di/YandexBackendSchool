@@ -63,12 +63,18 @@ def get_presents_num_per_month(import_id):
         return Response(response=json.dumps({'data': presents_num_per_month}),
                         status=200,
                         mimetype='application/json')
-    pass
 
 
 @app.route('/imports/<int:import_id>/towns/stat/percentile/age', methods=['GET'])
 def get_town_stat(import_id):
-    pass
+    try:
+        town_stat = db_helper.get_town_stat(import_id)
+    except ValueError:
+        return Response(response="Unknown import_id", status=400)
+    else:
+        return Response(response=json.dumps({'data': town_stat}),
+                        status=200,
+                        mimetype='application/json')
 
 
 if __name__ == '__main__':
