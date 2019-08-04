@@ -1,7 +1,7 @@
 import sqlite3
-import json
 import os
-import datetime
+from datetime import datetime
+from collections import defaultdict
 
 
 class Singleton(type):
@@ -62,9 +62,11 @@ class DBHelper(metaclass=Singleton):
         self._conn: sqlite3.Connection
         self._conn = None
 
-    def verify_citizen_data_types(self, citizen_data: dict) -> bool:
+    @staticmethod
+    def verify_citizen_data_types(citizen_data: dict) -> bool:
         integer_keys = ('import_id', 'citizen_id', 'apartment')
         string_keys = ('town', 'street', 'building', 'name', 'birth_date', 'gender')
+        list_tuple_keys = ('relatives',)
 
         for key in integer_keys:
             try:
@@ -80,7 +82,43 @@ class DBHelper(metaclass=Singleton):
             except KeyError:
                 pass
 
+        for key in list_tuple_keys:
+            try:
+                if not (isinstance(citizen_data[key], list) or isinstance(citizen_data[key], tuple)):
+                    return False
+            except KeyError:
+                pass
+
         return True
+
+    def verify_import_id(self, import_id) -> bool:
+        conn = sqlite3.connect(self.DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM imports WHERE import_id = ?;", (import_id,))
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return result is not None
+
+    def verify_citizen(self, import_id: int, citizen_id: int) -> int:
+        conn = sqlite3.connect(self.DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM citizens WHERE import_id = ? AND citizen_id = ?;", (import_id, citizen_id))
+        citizen_db_id = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        if citizen_db_id is None:
+            return 0
+        else:
+            return citizen_db_id[0]
+
+    @staticmethod
+    def json_date_to_sqlite_date(date: str) -> str:
+        return datetime.strptime(date, "%d.%m.%Y").strftime("%Y-%m-%d")
+
+    @staticmethod
+    def sqlite_date_to_json_date(date: str) -> str:
+        return datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
 
     def import_citizens(self, citizens: list) -> int:
         # check relatives
@@ -96,7 +134,7 @@ class DBHelper(metaclass=Singleton):
         conn = sqlite3.connect(self.DB_PATH)
         cursor = conn.cursor()
         cursor.execute("INSERT INTO imports (import_time) VALUES (?);",
-                       (datetime.datetime.now().isoformat(' ', 'milliseconds'),))
+                       (datetime.now().isoformat(' ', 'milliseconds'),))
         import_rowid = cursor.lastrowid
         cursor.execute("SELECT import_id FROM imports WHERE ROWID=?;", (import_rowid,))
         import_id = cursor.fetchone()[0]
@@ -105,8 +143,7 @@ class DBHelper(metaclass=Singleton):
             # INSERT citizens
             for citizen in citizens:
                 citizen['import_id'] = import_id
-                citizen['birth_date'] = datetime.datetime.strptime(citizen['birth_date'], "%d.%m.%Y").strftime(
-                    "%Y-%m-%d")
+                citizen['birth_date'] = self.json_date_to_sqlite_date(citizen['birth_date'])
                 if not self.verify_citizen_data_types(citizen):
                     raise TypeError
                 cursor.execute(
@@ -147,8 +184,7 @@ class DBHelper(metaclass=Singleton):
             keys = ('id', 'citizen_id', 'town', 'street', 'building', 'apartment', 'name', 'birth_date', 'gender')
             citizens = [dict(zip(keys, values)) for values in citizens_data]
             for citizen in citizens:
-                citizen['birth_date'] = datetime.datetime.strptime(citizen['birth_date'], "%Y-%m-%d").strftime(
-                    "%d.%m.%Y")
+                citizen['birth_date'] = self.sqlite_date_to_json_date(citizen['birth_date'])
                 cursor.execute("SELECT c.citizen_id FROM citizens c, relatives r "
                                "WHERE r.id1 = :id AND r.id2 = c.id "
                                "UNION "
@@ -169,8 +205,7 @@ class DBHelper(metaclass=Singleton):
             raise TypeError
 
         try:
-            patch_citizen_data['birth_date'] = datetime.datetime.strptime(
-                patch_citizen_data['birth_date'], "%d.%m.%Y").strftime("%Y-%m-%d")
+            patch_citizen_data['birth_date'] = self.json_date_to_sqlite_date(patch_citizen_data['birth_date'])
         except KeyError:
             pass
 
@@ -223,11 +258,10 @@ class DBHelper(metaclass=Singleton):
         else:
             conn.commit()
             cursor.execute("SELECT citizen_id, town, street, building, apartment, name, birth_date, gender "
-                           "FROM citizens WHERE id = ?;", (citizen_db_id, ))
+                           "FROM citizens WHERE id = ?;", (citizen_db_id,))
             keys = ('citizen_id', 'town', 'street', 'building', 'apartment', 'name', 'birth_date', 'gender')
             citizen_data = dict(zip(keys, cursor.fetchone()))
-            citizen_data['birth_date'] = datetime.datetime.strptime(citizen_data['birth_date'], "%Y-%m-%d").strftime(
-                "%d.%m.%Y")
+            citizen_data['birth_date'] = self.sqlite_date_to_json_date(citizen_data['birth_date'])
             cursor.execute("SELECT c.citizen_id FROM citizens c, relatives r "
                            "WHERE r.id1 = :id AND r.id2 = c.id OR r.id1 = c.id AND r.id2 = :id;",
                            {'id': citizen_db_id})
@@ -236,3 +270,31 @@ class DBHelper(metaclass=Singleton):
         finally:
             cursor.close()
             conn.close()
+
+    def get_presents_num_per_month(self, import_id: int) -> dict:
+        if not self.verify_import_id(import_id):
+            raise ValueError
+
+        conn = sqlite3.connect(self.DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, citizen_id, birth_date FROM citizens WHERE import_id = ?;", (import_id,))
+        citizens = {citizen_data[0]: {'citizen_id': citizen_data[1], 'birth_date': citizen_data[2]}
+                    for citizen_data in cursor.fetchall()}
+        presents_num_per_month = {month: defaultdict(lambda: 0) for month in range(1, 13)}
+        for citizen_db_id in citizens.keys():
+            cursor.execute("SELECT id1 FROM relatives WHERE id2 = :id "
+                           "UNION "
+                           "SELECT id2 FROM relatives WHERE id1 = :id;", {"id": citizen_db_id})
+            relatives_db_id = [relative_db_id[0] for relative_db_id in cursor.fetchall()]
+            for relative_db_id in relatives_db_id:
+                relative_birth_date = datetime.strptime(citizens[relative_db_id]['birth_date'], "%Y-%m-%d")
+                presents_num_per_month[relative_birth_date.month][citizens[citizen_db_id]['citizen_id']] += 1
+        cursor.close()
+        conn.close()
+
+        presents_num_per_month_result = dict()
+        for month in presents_num_per_month.keys():
+            presents_num_per_month_result[str(month)] = [{'citizen_id': citizen_id,
+                                                          'presents': presents_num_per_month[month][citizen_id]}
+                                                         for citizen_id in presents_num_per_month[month].keys()]
+        return presents_num_per_month_result

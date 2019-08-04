@@ -54,7 +54,15 @@ def get_citizens_data(import_id):
 
 
 @app.route('/imports/<int:import_id>/citizens/birthdays', methods=['GET'])
-def get_citizens_and_presents_num(import_id):
+def get_presents_num_per_month(import_id):
+    try:
+        presents_num_per_month = db_helper.get_presents_num_per_month(import_id)
+    except ValueError:
+        return Response(response="Unknown import_id", status=400)
+    else:
+        return Response(response=json.dumps({'data': presents_num_per_month}),
+                        status=200,
+                        mimetype='application/json')
     pass
 
 
