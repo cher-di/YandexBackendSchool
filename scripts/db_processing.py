@@ -128,7 +128,7 @@ class DBHelper(metaclass=Singleton):
             relatives_ids[citizen['citizen_id']] = citizen['relatives']
         for citizen_id, citizen_relatives_ids in relatives_ids.items():
             for relative_id in citizen_relatives_ids:
-                if citizen_id not in relatives_ids[relative_id] or citizen_id == relative_id:
+                if citizen_id not in relatives_ids[relative_id]:
                     raise ValueError
 
         # INSERT import
@@ -187,10 +187,8 @@ class DBHelper(metaclass=Singleton):
             for citizen in citizens:
                 citizen['birth_date'] = self.sqlite_date_to_json_date(citizen['birth_date'])
                 cursor.execute("SELECT c.citizen_id FROM citizens c, relatives r "
-                               "WHERE r.id1 = :id AND r.id2 = c.id "
-                               "UNION "
-                               "SELECT c.citizen_id FROM citizens c, relatives r "
-                               "WHERE r.id1 = c.id AND r.id2 = :id;", {'id': citizen['id']})
+                               "WHERE r.id1 = :id AND r.id2 = c.id OR r.id1 = c.id AND r.id2 = :id",
+                               {'id': citizen['id']})
                 citizen['relatives'] = [relative[0] for relative in cursor.fetchall()]
                 citizen.pop('id')
         return citizens
@@ -229,9 +227,6 @@ class DBHelper(metaclass=Singleton):
                 cursor.execute("UPDATE citizens SET {}=? WHERE id = ?;".format(key), (value, citizen_db_id))
 
             if new_relatives is not None:
-                if citizen_id in new_relatives:
-                    raise ValueError
-
                 cursor.execute("SELECT c.id FROM citizens c, relatives r "
                                "WHERE r.id1 = :id AND r.id2 = c.id OR r.id1 = c.id AND r.id2 = :id;",
                                {'id': citizen_db_id})
