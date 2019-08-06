@@ -1,7 +1,7 @@
 import datetime
 import psycopg2
 from collections import defaultdict
-from numpy import percentile
+from numpy import percentile, array
 from jsonschema import validate, ValidationError
 from time import time
 
@@ -191,29 +191,33 @@ class DBHelper(metaclass=Singleton):
             for citizen in citizens:
                 citizen['import_id'] = import_id
                 citizen['birth_date'] = self.json_date_to_postrgesql_date(citizen['birth_date'])
-                cursor.execute(
-                    "INSERT INTO citizens (import_id, citizen_id, town, street, building, apartment, name, birth_date, gender)"
-                    "VALUES (%(import_id)s, %(citizen_id)s, %(town)s, %(street)s, %(building)s, %(apartment)s, %(name)s, %(birth_date)s, %(gender)s);",
-                    citizen)
+            cursor.executemany(
+                "INSERT INTO citizens (import_id, citizen_id, town, street, building, apartment, name, birth_date, gender)"
+                "VALUES (%(import_id)s, %(citizen_id)s, %(town)s, %(street)s, %(building)s, %(apartment)s, %(name)s, %(birth_date)s, %(gender)s);",
+                citizens)
             print("Inserted citizens:", time() - before)
 
             # INSERT INTO relatives
             before = time()
+            cursor.execute("SELECT id, citizen_id FROM citizens WHERE import_id = %s;", (import_id,))
+            query_result = array(cursor.fetchall(), dtype=int)
+            citizen_id_to_citizen_db_id = dict(zip(query_result[:, 1].tolist(), query_result[:, 0].tolist()))
+
             worked_relatives = set()
-            for citizen_id, citizen_relative_id in relatives_ids.items():
+            # relatives_db_ids = defaultdict(lambda: [])
+            for citizen_id, citizen_relatives_ids in relatives_ids.items():
                 for relative_id in citizen_relatives_ids:
                     if relative_id not in worked_relatives:
-                        cursor.execute(
-                            "INSERT INTO relatives (id1, id2) SELECT c1.id, c2.id FROM citizens c1, citizens c2 "
-                            "WHERE c1.import_id = %(import_id)s AND c1.citizen_id = %(citizen_id)s AND "
-                            "c2.import_id = %(import_id)s AND c2.citizen_id = %(relative_id)s;",
-                            ({'import_id': import_id,
-                              'citizen_id': citizen_id,
-                              'relative_id': relative_id}))
+                        # relatives_db_ids[citizen_id_to_citizen_db_id[citizen_id]].\
+                        #     append(citizen_id_to_citizen_db_id[relative_id])
+                        cursor.execute("INSERT INTO relatives (id1, id2) VALUES (%s, %s);",
+                                       (citizen_id_to_citizen_db_id[citizen_id],
+                                        citizen_id_to_citizen_db_id[relative_id]))
                 worked_relatives.add(citizen_id)
             print("Inserted relatives:", time() - before)
-        except (psycopg2.DatabaseError, psycopg2.Warning):
+        except (psycopg2.DatabaseError, psycopg2.Warning) as e:
             conn.rollback()
+            print(e.__class__.__name__, e)
             return None
         else:
             conn.commit()
@@ -245,7 +249,6 @@ class DBHelper(metaclass=Singleton):
         cursor.close()
         conn.close()
         return citizens
-
 
     def change_citizen_data(self, import_id: int, citizen_id: int, patch_citizen_data: dict) -> dict:
         # check citizen_id
