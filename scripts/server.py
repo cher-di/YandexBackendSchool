@@ -1,5 +1,6 @@
 from flask import Flask, request, Response, json
 from db_processing import DBHelper
+from sys import exit
 
 app = Flask(__name__)
 db_helper: DBHelper
@@ -7,7 +8,7 @@ db_helper: DBHelper
 
 @app.route('/imports', methods=['POST'])
 def import_data():
-    import_id = db_helper.import_citizens(request.json['citizens'])
+    import_id = db_helper.import_citizens(request.json)
     if import_id is None:
         return Response(status=400)
     else:
@@ -30,7 +31,7 @@ def change_citizen_data(import_id, citizen_id):
 @app.route('/imports/<int:import_id>/citizens', methods=['GET'])
 def get_citizens_data(import_id):
     citizens = db_helper.get_imported_citizens(import_id)
-    if citizens in None:
+    if citizens is None:
         return Response(status=400)
     else:
         return Response(response=json.dumps({"data": citizens}),
@@ -61,5 +62,10 @@ def get_town_stat(import_id):
 
 
 if __name__ == '__main__':
-    db_helper = DBHelper()
-    app.run()
+    try:
+        db_helper = DBHelper()
+    except Exception as e:
+        print(e)
+        exit()
+    else:
+        app.run()
