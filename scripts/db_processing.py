@@ -4,6 +4,7 @@ from collections import defaultdict
 from numpy import percentile, array
 from jsonschema import validate, ValidationError
 from time import time
+from psycopg2 import extras
 
 
 class Singleton(type):
@@ -191,10 +192,10 @@ class DBHelper(metaclass=Singleton):
             for citizen in citizens:
                 citizen['import_id'] = import_id
                 citizen['birth_date'] = self.json_date_to_postrgesql_date(citizen['birth_date'])
-            cursor.executemany(
-                "INSERT INTO citizens (import_id, citizen_id, town, street, building, apartment, name, birth_date, gender)"
-                "VALUES (%(import_id)s, %(citizen_id)s, %(town)s, %(street)s, %(building)s, %(apartment)s, %(name)s, %(birth_date)s, %(gender)s);",
-                citizens)
+            extras.execute_values(cursor,
+                                  "INSERT INTO citizens (import_id, citizen_id, town, street, building, apartment, name, birth_date, gender) VALUES %s;",
+                                  citizens,
+                                  "(%(import_id)s, %(citizen_id)s, %(town)s, %(street)s, %(building)s, %(apartment)s, %(name)s, %(birth_date)s, %(gender)s)")
             print("Inserted citizens:", time() - before)
 
             # INSERT INTO relatives
@@ -213,7 +214,10 @@ class DBHelper(metaclass=Singleton):
                 worked_relatives.add(citizen_id)
             print("Constructed data to INSERT INTO relatives:", time() - before)
             before = time()
-            cursor.executemany("INSERT INTO relatives (id1, id2) VALUES (%s, %s);", relatives_db_ids)
+            extras.execute_values(cursor,
+                                  "INSERT INTO relatives (id1, id2) VALUES %s;",
+                                  relatives_db_ids,
+                                  "(%s, %s)")
             print("Inserted relatives:", time() - before)
         except (psycopg2.DatabaseError, psycopg2.Warning) as e:
             conn.rollback()
