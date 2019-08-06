@@ -200,20 +200,20 @@ class DBHelper(metaclass=Singleton):
             # INSERT INTO relatives
             before = time()
             cursor.execute("SELECT id, citizen_id FROM citizens WHERE import_id = %s;", (import_id,))
-            query_result = array(cursor.fetchall(), dtype=int)
+            query_result = array(cursor.fetchall())
             citizen_id_to_citizen_db_id = dict(zip(query_result[:, 1].tolist(), query_result[:, 0].tolist()))
 
             worked_relatives = set()
-            # relatives_db_ids = defaultdict(lambda: [])
+            relatives_db_ids = []
             for citizen_id, citizen_relatives_ids in relatives_ids.items():
                 for relative_id in citizen_relatives_ids:
                     if relative_id not in worked_relatives:
-                        # relatives_db_ids[citizen_id_to_citizen_db_id[citizen_id]].\
-                        #     append(citizen_id_to_citizen_db_id[relative_id])
-                        cursor.execute("INSERT INTO relatives (id1, id2) VALUES (%s, %s);",
-                                       (citizen_id_to_citizen_db_id[citizen_id],
-                                        citizen_id_to_citizen_db_id[relative_id]))
+                        relatives_db_ids.append((citizen_id_to_citizen_db_id[citizen_id],
+                                                 citizen_id_to_citizen_db_id[relative_id]))
                 worked_relatives.add(citizen_id)
+            print("Constructed data to INSERT INTO relatives:", time() - before)
+            before = time()
+            cursor.executemany("INSERT INTO relatives (id1, id2) VALUES (%s, %s);", relatives_db_ids)
             print("Inserted relatives:", time() - before)
         except (psycopg2.DatabaseError, psycopg2.Warning) as e:
             conn.rollback()
