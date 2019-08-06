@@ -1,9 +1,9 @@
 import sqlite3
 import datetime
+import psycopg2
 from collections import defaultdict
 from numpy import percentile
 from jsonschema import validate, ValidationError
-import psycopg2
 
 
 class Singleton(type):
@@ -16,21 +16,75 @@ class Singleton(type):
 
 
 class DBHelper(metaclass=Singleton):
-    CITIZEN_SCHEMA = {"citizen_id": "number",
-                      "town": "string",
-                      "street": "string",
-                      "building": "string",
-                      "apartment": "number",
-                      "name": "string",
-                      "birth_date": "string",
-                      "gender": "string",
-                      "relatives": "array"}
+    IMPORT_CITIZEN_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "citizen_id": {"type": "number"},
+            "town": {"type": "string"},
+            "street": {"type": "string"},
+            "building": {"type": "string"},
+            "apartment": {"type": "number"},
+            "name": {"type": "string"},
+            "birth_date": {
+                "type": "string",
+                "pattern": "^\s*(3[01]|[12][0-9]|0?[1-9])\.(1[012]|0?[1-9])\.((?:19|20)\d{2})\s*$"
+            },
+            "gender": {
+                "type": "string",
+                "enum": ["male", "female"]
+            },
+            "relatives": {
+                "type": "array",
+                "items": {"type": "number"},
+            }
+        },
+        "additionalProperties": False,
+        "required": ["citizen_id", "town", "street", "building", "apartment", "name", "birth_date", "gender",
+                     "relatives"]
+    }
+    CHANGE_CITIZEN_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "town": {"type": "string"},
+            "street": {"type": "string"},
+            "building": {"type": "string"},
+            "apartment": {"type": "number"},
+            "name": {"type": "string"},
+            "birth_date": {
+                "type": "string",
+                "pattern": "^\s*(3[01]|[12][0-9]|0?[1-9])\.(1[012]|0?[1-9])\.((?:19|20)\d{2})\s*$"
+            },
+            "gender": {
+                "type": "string",
+                "enum": ["male", "female"]
+            },
+            "relatives": {
+                "type": "array",
+                "items": {"type": "number"},
+            }
+        },
+        "additionalProperties": False,
+        "minProperties": 1
+    }
+    IMPORT_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "citizens": {
+                "type": "array",
+                "items": {"type": "object"}
+            }
+        },
+        "required": ["citizens"],
+        "additionalProperties": False
+    }
     GENDER = {'male', 'female'}
-    DB_ACCOUNT = {"user": "ybs_rest_user",
-                  "password": "123456qwerty",
-                  "host": "127.0.0.1",
-                  "port": "5432",
-                  "database": "ybs_rest_db"}
+    DB_ACCOUNT = {
+        "user": "ybs_rest_user",
+        "password": "123456qwerty",
+        "host": "127.0.0.1",
+        "port": "5432",
+        "database": "ybs_rest_db"
+    }
 
     def __init__(self):
         try:
@@ -84,29 +138,9 @@ class DBHelper(metaclass=Singleton):
     def postgresql_date_to_json_date(date: str) -> str:
         return datetime.datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
 
-    @staticmethod
-    def validate_json_date_format(date: str) -> bool:
-        # validate birth_date dd.mm.yyyy
-        try:
-            datetime.datetime.strptime(date, "%d.%m.%Y")
-        except ValueError:
-            return False
-        else:
-            return True
-
-    @classmethod
-    def validate_citizen_json_schema(cls, citizen: dict) -> bool:
-        # validate citizen json schema
-        try:
-            validate(instance=citizen, schema=cls.CITIZEN_SCHEMA)
-        except ValidationError:
-            return False
-        else:
-            return True
-
     def validate_import_id(self, import_id: int) -> bool:
         # validate if import_id exists
-        conn = psycopg2.connect(self.DB_ACCOUNT)
+        conn = psycopg2.connect(**self.DB_ACCOUNT)
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM imports WHERE import_id = %s;", (import_id,))
         try:
@@ -118,7 +152,7 @@ class DBHelper(metaclass=Singleton):
 
     def validate_citizen_id(self, import_id: int, citizen_id: int) -> bool:
         # validate if citizen_id with import_id exists
-        conn = psycopg2.connect(self.DB_ACCOUNT)
+        conn = psycopg2.connect(**self.DB_ACCOUNT)
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM citizens WHERE import_id = %s AND citizen_id = %s;", (import_id, citizen_id))
         try:
@@ -128,40 +162,17 @@ class DBHelper(metaclass=Singleton):
         else:
             return True
 
-    @staticmethod
-    def verify_citizen_data_types(citizen_data: dict) -> bool:
-        integer_keys = ('import_id', 'citizen_id', 'apartment')
-        string_keys = ('town', 'street', 'building', 'name', 'birth_date', 'gender')
-        list_tuple_keys = ('relatives',)
+    def import_citizens(self, citizens: dict) -> int:
+        # check citizens
+        try:
+            validate(citizens, self.IMPORT_SCHEMA)
+        except ValidationError:
+            return None
 
-        for key in integer_keys:
-            try:
-                if not isinstance(citizen_data[key], int):
-                    return False
-            except KeyError:
-                pass
-
-        for key in string_keys:
-            try:
-                if not isinstance(citizen_data[key], str):
-                    return False
-            except KeyError:
-                pass
-
-        for key in list_tuple_keys:
-            try:
-                if not (isinstance(citizen_data[key], list) or isinstance(citizen_data[key], tuple)):
-                    return False
-            except KeyError:
-                pass
-
-        return True
-
-    def import_citizens(self, citizens: list) -> None:
-        # check citizen json schema and date format
+        # check citizen
+        citizens = citizens['citizens']
         for citizen in citizens:
-            if not (self.validate_citizen_json_schema(citizen) and
-                    self.validate_json_date_format(citizen['birth_date'])):
+            if not validate(citizen, self.IMPORT_CITIZEN_SCHEMA):
                 return None
 
         # check relatives
@@ -173,7 +184,7 @@ class DBHelper(metaclass=Singleton):
 
         try:
             # INSERT INTO imports
-            conn = psycopg2.connect(self.DB_ACCOUNT)
+            conn = psycopg2.connect(**self.DB_ACCOUNT)
             cursor = conn.cursor()
             cursor.execute("INSERT INTO imports (import_time) VALUES (%s) RETURNING import_id;",
                            (datetime.datetime.now().isoformat(' ', 'milliseconds'),))
@@ -201,9 +212,9 @@ class DBHelper(metaclass=Singleton):
                               'citizen_id': citizen_id,
                               'relative_id': relative_id}))
                 worked_relatives.add(citizen_id)
-        except (psycopg2.DatabaseError, psycopg2.Warning) as e:
+        except (psycopg2.DatabaseError, psycopg2.Warning):
             conn.rollback()
-            raise e
+            return None
         else:
             conn.commit()
             return import_id
@@ -212,55 +223,65 @@ class DBHelper(metaclass=Singleton):
             conn.close()
 
     def get_imported_citizens(self, import_id: int) -> list:
-        conn = sqlite3.connect(self.DB_PATH)
-        cursor = conn.cursor()
+        # check import_id
+        if not self.validate_import_id(import_id):
+            return None
 
-        cursor.execute("SELECT id, citizen_id, town, street, building, apartment, name, birth_date, gender "
-                       "FROM citizens WHERE import_id = %s;", (import_id,))
-        citizens_data = cursor.fetchall()
-        if not citizens_data:
-            raise ValueError
+        try:
+            conn = psycopg2.connect(**self.DB_ACCOUNT)
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, citizen_id, town, street, building, apartment, name, birth_date, gender "
+                           "FROM citizens WHERE import_id = %s;", (import_id,))
+            citizens_data = cursor.fetchall()
+        except psycopg2.ProgrammingError:
+            return []
         else:
-            keys = ('id', 'citizen_id', 'town', 'street', 'building', 'apartment', 'name', 'birth_date', 'gender')
+            keys = ['id'] + [key for key in self.IMPORT_CITIZEN_SCHEMA.keys() if key != 'relatives']
             citizens = [dict(zip(keys, values)) for values in citizens_data]
             for citizen in citizens:
                 citizen['birth_date'] = self.postgresql_date_to_json_date(citizen['birth_date'])
                 cursor.execute("SELECT c.citizen_id FROM citizens c, relatives r "
                                "WHERE r.id1 = :id AND r.id2 = c.id OR r.id1 = c.id AND r.id2 = :id",
                                {'id': citizen['id']})
-                citizen['relatives'] = [relative[0] for relative in cursor.fetchall()]
+                try:
+                    citizen['relatives'] = [relative[0] for relative in cursor.fetchall()]
+                except psycopg2.ProgrammingError:
+                    citizens['relatives'] = []
                 citizen.pop('id')
-        return citizens
+            return citizens
+        finally:
+            cursor.close()
+            conn.close()
 
     def change_citizen_data(self, import_id: int, citizen_id: int, patch_citizen_data: dict) -> dict:
-        template_citizen_data_keys = {'citizen_id', 'town', 'street', 'building', 'apartment', 'name', 'birth_date',
-                                      'gender', 'relatives'}
-        patch_citizen_data_keys = set(patch_citizen_data.keys())
-        if not patch_citizen_data_keys <= template_citizen_data_keys or 'citizen_id' in patch_citizen_data_keys:
-            raise KeyError
+        # check citizen_id
+        if not self.validate_citizen_id(import_id, citizen_id):
+            return None
 
-        if not self.verify_citizen_data_types(patch_citizen_data):
-            raise TypeError
+        # check patch_citizen_data
+        try:
+            validate(patch_citizen_data, self.CHANGE_CITIZEN_SCHEMA)
+        except ValidationError:
+            return None
 
+        # change birth_date to postgresql format, if patch_citizen_data contains birth_date
         try:
             patch_citizen_data['birth_date'] = self.json_date_to_postrgesql_date(patch_citizen_data['birth_date'])
         except KeyError:
             pass
 
+        # get relatives, if patch_citizen_data contains relatives
         try:
             new_relatives = patch_citizen_data.pop('relatives')
         except KeyError:
             new_relatives = None
 
         try:
-            conn = sqlite3.connect(self.DB_PATH)
+            conn = psycopg2.connect(**self.DB_ACCOUNT)
             cursor = conn.cursor()
 
             cursor.execute("SELECT id FROM citizens WHERE import_id = %s AND citizen_id = %s;", (import_id, citizen_id))
-            try:
-                citizen_db_id = cursor.fetchone()[0]
-            except TypeError:
-                raise ValueError
+            citizen_db_id = cursor.fetchone()[0]
 
             for key, value in patch_citizen_data.items():
                 cursor.execute("UPDATE citizens SET {}=%s WHERE id = %s;".format(key), (value, citizen_db_id))
@@ -269,9 +290,12 @@ class DBHelper(metaclass=Singleton):
                 cursor.execute("SELECT c.id FROM citizens c, relatives r "
                                "WHERE r.id1 = :id AND r.id2 = c.id OR r.id1 = c.id AND r.id2 = :id;",
                                {'id': citizen_db_id})
-                old_relatives_db_id = [relative[0] for relative in cursor.fetchall()]
+                try:
+                    old_relatives_db_id = [relative[0] for relative in cursor.fetchall()]
+                except psycopg2.ProgrammingError:
+                    old_relatives_db_id = []
 
-                new_relatives_db_id = list()
+                new_relatives_db_id = []
                 for relative in new_relatives:
                     cursor.execute("SELECT id FROM citizens WHERE import_id = %s AND citizen_id = %s;",
                                    (import_id, relative))
@@ -287,9 +311,9 @@ class DBHelper(metaclass=Singleton):
                 for relative_db_id in set(new_relatives_db_id) - (set(new_relatives_db_id) & set(old_relatives_db_id)):
                     cursor.execute("INSERT INTO relatives VALUES (%s, %s);", (citizen_db_id, relative_db_id))
 
-        except Exception as e:
+        except (psycopg2.DatabaseError, psycopg2.Warning):
             conn.rollback()
-            raise e
+            return None
         else:
             conn.commit()
             cursor.execute("SELECT citizen_id, town, street, building, apartment, name, birth_date, gender "
@@ -307,14 +331,17 @@ class DBHelper(metaclass=Singleton):
             conn.close()
 
     def get_presents_num_per_month(self, import_id: int) -> dict:
-        if not self.verify_import_id(import_id):
-            raise ValueError
+        if not self.validate_import_id(import_id):
+            return None
 
-        conn = sqlite3.connect(self.DB_PATH)
+        conn = psycopg2.connect(**self.DB_ACCOUNT)
         cursor = conn.cursor()
         cursor.execute("SELECT id, citizen_id, birth_date FROM citizens WHERE import_id = %s;", (import_id,))
-        citizens = {citizen_data[0]: {'citizen_id': citizen_data[1], 'birth_date': citizen_data[2]}
-                    for citizen_data in cursor.fetchall()}
+        try:
+            citizens = {citizen_data[0]: {'citizen_id': citizen_data[1], 'birth_date': citizen_data[2]}
+                        for citizen_data in cursor.fetchall()}
+        except psycopg2.ProgrammingError:
+            citizens = []
         presents_num_per_month = {month: defaultdict(lambda: 0) for month in range(1, 13)}
         for citizen_db_id in citizens.keys():
             cursor.execute("SELECT id1 FROM relatives WHERE id2 = :id "
@@ -341,15 +368,18 @@ class DBHelper(metaclass=Singleton):
         return today.year - born.year - ((today.month, today.day) < (born.month, born.day))
 
     def get_town_stat(self, import_id: int) -> list:
-        if not self.verify_import_id(import_id):
-            raise ValueError
+        if not self.validate_import_id(import_id):
+            return None
 
-        conn = sqlite3.connect(self.DB_PATH)
+        conn = psycopg2.connect(**self.DB_ACCOUNT)
         cursor = conn.cursor()
         cursor.execute("SELECT DISTINCT town FROM citizens WHERE import_id = %s;", (import_id,))
-        towns = [town[0] for town in cursor.fetchall()]
+        try:
+            towns = [town[0] for town in cursor.fetchall()]
+        except psycopg2.ProgrammingError:
+            towns = []
         percentiles = (50, 75, 99)
-        town_stat = list()
+        town_stat = []
         for town in towns:
             cursor.execute("SELECT birth_date FROM citizens WHERE import_id = %s AND town = %s;", (import_id, town))
             ages = [self.calculate_age(birth_date[0]) for birth_date in cursor.fetchall()]
