@@ -1,8 +1,9 @@
 import sqlite3
-import os
 import datetime
 from collections import defaultdict
 from numpy import percentile
+from jsonschema import validate, ValidationError
+import psycopg2
 
 
 class Singleton(type):
@@ -15,53 +16,117 @@ class Singleton(type):
 
 
 class DBHelper(metaclass=Singleton):
-    DB_FILENAME = 'citizens.db'
-    DB_PATH = os.path.abspath(os.path.split(os.path.abspath(__file__))[0] + '/../citizens.db')
+    CITIZEN_SCHEMA = {"citizen_id": "number",
+                      "town": "string",
+                      "street": "string",
+                      "building": "string",
+                      "apartment": "number",
+                      "name": "string",
+                      "birth_date": "string",
+                      "gender": "string",
+                      "relatives": "array"}
+    GENDER = {'male', 'female'}
+    DB_ACCOUNT = {"user": "ybs_rest_user",
+                  "password": "123456qwerty",
+                  "host": "127.0.0.1",
+                  "port": "5432",
+                  "database": "ybs_rest_db"}
 
     def __init__(self):
-        if not os.path.exists(self.DB_PATH):
-            open(self.DB_PATH, 'w').close()
-
-            conn = sqlite3.connect(self.DB_PATH)
+        try:
+            conn = psycopg2.connect(**self.DB_ACCOUNT)
             cursor = conn.cursor()
-            cursor.executescript("""
-            CREATE TABLE imports(
-                import_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                import_time TEXT NOT NULL
-            );
-            
-            CREATE TABLE citizens(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                import_id INTEGER NOT NULL,
-                citizen_id INTEGER NOT NULL,
-                town TEXT NOT NULL,
-                street TEXT NOT NULL,
-                building TEXT NOT NULL,
-                apartment INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                birth_date TEXT NOT NULL,
-                gender TEXT NOT NULL CHECK(gender IN ('male', 'female')),
-                CONSTRAINT citizens_fk FOREIGN KEY (import_id) REFERENCES imports(import_id),
-                CONSTRAINT citizens_uk UNIQUE (import_id, citizen_id)
-            );
-                
-            CREATE TABLE  relatives(
-                id1 INTEGER NOT NULL,
-                id2 INTEGER NOT NULL,
-                CONSTRAINT relatives_fk_id1 FOREIGN KEY (id1) REFERENCES citizens(id),
-                CONSTRAINT relatives_fk_id2 FOREIGN KEY (id2) REFERENCES citizens(id)
-            );
-            
-            CREATE UNIQUE INDEX citizens_idx ON citizens (import_id, citizen_id);
-            CREATE INDEX relatives_idx_1 ON relatives (id1);
-            CREATE INDEX relatives_idx_2 ON relatives (id2);
-            """)
+            cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS imports(
+                            import_id SERIAL PRIMARY KEY,
+                            import_time TIMESTAMP NOT NULL
+                        );
+    
+                        CREATE TABLE IF NOT EXISTS citizens(
+                            id SERIAL,
+                            import_id INT NOT NULL,
+                            citizen_id INT NOT NULL,
+                            town VARCHAR(70) NOT NULL,
+                            street VARCHAR(70) NOT NULL,
+                            building VARCHAR(20) NOT NULL,
+                            apartment INT NOT NULL,
+                            name VARCHAR(50) NOT NULL,
+                            birth_date DATE NOT NULL,
+                            gender VARCHAR(6) NOT NULL CHECK(gender IN ('male', 'female')),
+                            CONSTRAINT citizens_pk PRIMARY KEY (id),
+                            CONSTRAINT citizens_fk FOREIGN KEY (import_id) REFERENCES imports(import_id),
+                            CONSTRAINT citizens_uk UNIQUE (import_id, citizen_id)
+                        );
+    
+                        CREATE TABLE IF NOT EXISTS relatives(
+                            id1 INT NOT NULL,
+                            id2 INT NOT NULL,
+                            CONSTRAINT relatives_fk_id1 FOREIGN KEY (id1) REFERENCES citizens(id),
+                            CONSTRAINT relatives_fk_id2 FOREIGN KEY (id2) REFERENCES citizens(id),
+                            CONSTRAINT relatives_uk UNIQUE (id1, id2)
+                        );
+    
+                        CREATE UNIQUE INDEX IF NOT EXISTS citizens_idx ON citizens (import_id, citizen_id);
+                        CREATE INDEX IF NOT EXISTS relatives_idx_1 ON relatives (id1);
+                        CREATE INDEX IF NOT EXISTS relatives_idx_2 ON relatives (id2);
+                        """)
             cursor.close()
             conn.commit()
             conn.close()
+        except psycopg2.Error:
+            raise Exception("Failed to connect to database")
 
-        self._conn: sqlite3.Connection
-        self._conn = None
+    @staticmethod
+    def json_date_to_postrgesql_date(date: str) -> str:
+        return datetime.datetime.strptime(date, "%d.%m.%Y").strftime("%Y-%m-%d")
+
+    @staticmethod
+    def postgresql_date_to_json_date(date: str) -> str:
+        return datetime.datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
+
+    @staticmethod
+    def validate_json_date_format(date: str) -> bool:
+        # validate birth_date dd.mm.yyyy
+        try:
+            datetime.datetime.strptime(date, "%d.%m.%Y")
+        except ValueError:
+            return False
+        else:
+            return True
+
+    @classmethod
+    def validate_citizen_json_schema(cls, citizen: dict) -> bool:
+        # validate citizen json schema
+        try:
+            validate(instance=citizen, schema=cls.CITIZEN_SCHEMA)
+        except ValidationError:
+            return False
+        else:
+            return True
+
+    def validate_import_id(self, import_id: int) -> bool:
+        # validate if import_id exists
+        conn = psycopg2.connect(self.DB_ACCOUNT)
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM imports WHERE import_id = %s;", (import_id,))
+        try:
+            cursor.fetchone()
+        except psycopg2.ProgrammingError:
+            return False
+        else:
+            return True
+
+    def validate_citizen_id(self, import_id: int, citizen_id: int) -> bool:
+        # validate if citizen_id with import_id exists
+        conn = psycopg2.connect(self.DB_ACCOUNT)
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM citizens WHERE import_id = %s AND citizen_id = %s;", (import_id, citizen_id))
+        try:
+            cursor.fetchone()
+        except psycopg2.ProgrammingError:
+            return False
+        else:
+            return True
 
     @staticmethod
     def verify_citizen_data_types(citizen_data: dict) -> bool:
@@ -92,77 +157,51 @@ class DBHelper(metaclass=Singleton):
 
         return True
 
-    def verify_import_id(self, import_id) -> bool:
-        conn = sqlite3.connect(self.DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM imports WHERE import_id = ?;", (import_id,))
-        result = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        return result is not None
-
-    def verify_citizen(self, import_id: int, citizen_id: int) -> int:
-        conn = sqlite3.connect(self.DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id FROM citizens WHERE import_id = ? AND citizen_id = ?;", (import_id, citizen_id))
-        citizen_db_id = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        if citizen_db_id is None:
-            return 0
-        else:
-            return citizen_db_id[0]
-
-    @staticmethod
-    def json_date_to_sqlite_date(date: str) -> str:
-        return datetime.datetime.strptime(date, "%d.%m.%Y").strftime("%Y-%m-%d")
-
-    @staticmethod
-    def sqlite_date_to_json_date(date: str) -> str:
-        return datetime.datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%Y")
-
-    def import_citizens(self, citizens: list) -> int:
-        # check relatives
-        relatives_ids = dict()
+    def import_citizens(self, citizens: list) -> None:
+        # check citizen json schema and date format
         for citizen in citizens:
-            relatives_ids[citizen['citizen_id']] = citizen['relatives']
+            if not (self.validate_citizen_json_schema(citizen) and
+                    self.validate_json_date_format(citizen['birth_date'])):
+                return None
+
+        # check relatives
+        relatives_ids = {citizen['citizen_id']: citizen['relatives'] for citizen in citizens}
         for citizen_id, citizen_relatives_ids in relatives_ids.items():
             for relative_id in citizen_relatives_ids:
                 if citizen_id not in relatives_ids[relative_id]:
-                    raise ValueError
-
-        # INSERT import
-        conn = sqlite3.connect(self.DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO imports (import_time) VALUES (?);",
-                       (datetime.datetime.now().isoformat(' ', 'milliseconds'),))
-        import_rowid = cursor.lastrowid
-        cursor.execute("SELECT import_id FROM imports WHERE ROWID=?;", (import_rowid,))
-        import_id = cursor.fetchone()[0]
+                    return None
 
         try:
-            # INSERT citizens
+            # INSERT INTO imports
+            conn = psycopg2.connect(self.DB_ACCOUNT)
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO imports (import_time) VALUES (%s) RETURNING import_id;",
+                           (datetime.datetime.now().isoformat(' ', 'milliseconds'),))
+            import_id = cursor.fetchone()[0]
+
+            # INSERT INTO citizens
             for citizen in citizens:
                 citizen['import_id'] = import_id
-                citizen['birth_date'] = self.json_date_to_sqlite_date(citizen['birth_date'])
-                if not self.verify_citizen_data_types(citizen):
-                    raise TypeError
+                citizen['birth_date'] = self.json_date_to_postrgesql_date(citizen['birth_date'])
                 cursor.execute(
                     "INSERT INTO citizens (import_id, citizen_id, town, street, building, apartment, name, birth_date, gender)"
-                    "VALUES (:import_id, :citizen_id, :town, :street, :building, :apartment, :name, :birth_date, :gender);",
+                    "VALUES (%(import_id)s, %(citizen_id)s, %(town)s, %(street)s, %(building)s, %(apartment)s, %(name)s, %(birth_date)s, %(gender)s);",
                     citizen)
 
-            # INSERT relatives
+            # INSERT INTO relatives
             worked_relatives = set()
-            for citizen in citizens:
-                for relative_id in citizen['relatives']:
+            for citizen_id, citizen_relative_id in relatives_ids:
+                for relative_id in citizen_relatives_ids:
                     if relative_id not in worked_relatives:
                         cursor.execute(
                             "INSERT INTO relatives (id1, id2) SELECT c1.id, c2.id FROM citizens c1, citizens c2 "
-                            "WHERE c1.import_id = ? AND c1.citizen_id = ? AND c2.import_id = ? AND c2.citizen_id = ?;",
-                            (import_id, citizen['citizen_id'], import_id, relative_id))
-                worked_relatives.add(citizen['citizen_id'])
-        except Exception as e:
+                            "WHERE c1.import_id = %(import_id)s AND c1.citizen_id = %(citizen_id)s AND "
+                            "c2.import_id = %(import_id)s AND c2.citizen_id = %(relative_id)s;",
+                            ({'import_id': import_id,
+                              'citizen_id': citizen_id,
+                              'relative_id': relative_id}))
+                worked_relatives.add(citizen_id)
+        except (psycopg2.DatabaseError, psycopg2.Warning) as e:
             conn.rollback()
             raise e
         else:
@@ -177,7 +216,7 @@ class DBHelper(metaclass=Singleton):
         cursor = conn.cursor()
 
         cursor.execute("SELECT id, citizen_id, town, street, building, apartment, name, birth_date, gender "
-                       "FROM citizens WHERE import_id = ?;", (import_id,))
+                       "FROM citizens WHERE import_id = %s;", (import_id,))
         citizens_data = cursor.fetchall()
         if not citizens_data:
             raise ValueError
@@ -185,7 +224,7 @@ class DBHelper(metaclass=Singleton):
             keys = ('id', 'citizen_id', 'town', 'street', 'building', 'apartment', 'name', 'birth_date', 'gender')
             citizens = [dict(zip(keys, values)) for values in citizens_data]
             for citizen in citizens:
-                citizen['birth_date'] = self.sqlite_date_to_json_date(citizen['birth_date'])
+                citizen['birth_date'] = self.postgresql_date_to_json_date(citizen['birth_date'])
                 cursor.execute("SELECT c.citizen_id FROM citizens c, relatives r "
                                "WHERE r.id1 = :id AND r.id2 = c.id OR r.id1 = c.id AND r.id2 = :id",
                                {'id': citizen['id']})
@@ -204,7 +243,7 @@ class DBHelper(metaclass=Singleton):
             raise TypeError
 
         try:
-            patch_citizen_data['birth_date'] = self.json_date_to_sqlite_date(patch_citizen_data['birth_date'])
+            patch_citizen_data['birth_date'] = self.json_date_to_postrgesql_date(patch_citizen_data['birth_date'])
         except KeyError:
             pass
 
@@ -217,14 +256,14 @@ class DBHelper(metaclass=Singleton):
             conn = sqlite3.connect(self.DB_PATH)
             cursor = conn.cursor()
 
-            cursor.execute("SELECT id FROM citizens WHERE import_id = ? AND citizen_id = ?;", (import_id, citizen_id))
+            cursor.execute("SELECT id FROM citizens WHERE import_id = %s AND citizen_id = %s;", (import_id, citizen_id))
             try:
                 citizen_db_id = cursor.fetchone()[0]
             except TypeError:
                 raise ValueError
 
             for key, value in patch_citizen_data.items():
-                cursor.execute("UPDATE citizens SET {}=? WHERE id = ?;".format(key), (value, citizen_db_id))
+                cursor.execute("UPDATE citizens SET {}=%s WHERE id = %s;".format(key), (value, citizen_db_id))
 
             if new_relatives is not None:
                 cursor.execute("SELECT c.id FROM citizens c, relatives r "
@@ -234,7 +273,7 @@ class DBHelper(metaclass=Singleton):
 
                 new_relatives_db_id = list()
                 for relative in new_relatives:
-                    cursor.execute("SELECT id FROM citizens WHERE import_id = ? AND citizen_id = ?;",
+                    cursor.execute("SELECT id FROM citizens WHERE import_id = %s AND citizen_id = %s;",
                                    (import_id, relative))
                     new_relatives_db_id.append(cursor.fetchone()[0])
 
@@ -246,7 +285,7 @@ class DBHelper(metaclass=Singleton):
 
                 # add new added relatives
                 for relative_db_id in set(new_relatives_db_id) - (set(new_relatives_db_id) & set(old_relatives_db_id)):
-                    cursor.execute("INSERT INTO relatives VALUES (?, ?);", (citizen_db_id, relative_db_id))
+                    cursor.execute("INSERT INTO relatives VALUES (%s, %s);", (citizen_db_id, relative_db_id))
 
         except Exception as e:
             conn.rollback()
@@ -254,10 +293,10 @@ class DBHelper(metaclass=Singleton):
         else:
             conn.commit()
             cursor.execute("SELECT citizen_id, town, street, building, apartment, name, birth_date, gender "
-                           "FROM citizens WHERE id = ?;", (citizen_db_id,))
+                           "FROM citizens WHERE id = %s;", (citizen_db_id,))
             keys = ('citizen_id', 'town', 'street', 'building', 'apartment', 'name', 'birth_date', 'gender')
             citizen_data = dict(zip(keys, cursor.fetchone()))
-            citizen_data['birth_date'] = self.sqlite_date_to_json_date(citizen_data['birth_date'])
+            citizen_data['birth_date'] = self.postgresql_date_to_json_date(citizen_data['birth_date'])
             cursor.execute("SELECT c.citizen_id FROM citizens c, relatives r "
                            "WHERE r.id1 = :id AND r.id2 = c.id OR r.id1 = c.id AND r.id2 = :id;",
                            {'id': citizen_db_id})
@@ -273,7 +312,7 @@ class DBHelper(metaclass=Singleton):
 
         conn = sqlite3.connect(self.DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, citizen_id, birth_date FROM citizens WHERE import_id = ?;", (import_id,))
+        cursor.execute("SELECT id, citizen_id, birth_date FROM citizens WHERE import_id = %s;", (import_id,))
         citizens = {citizen_data[0]: {'citizen_id': citizen_data[1], 'birth_date': citizen_data[2]}
                     for citizen_data in cursor.fetchall()}
         presents_num_per_month = {month: defaultdict(lambda: 0) for month in range(1, 13)}
@@ -307,12 +346,12 @@ class DBHelper(metaclass=Singleton):
 
         conn = sqlite3.connect(self.DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT town FROM citizens WHERE import_id = ?;", (import_id,))
+        cursor.execute("SELECT DISTINCT town FROM citizens WHERE import_id = %s;", (import_id,))
         towns = [town[0] for town in cursor.fetchall()]
         percentiles = (50, 75, 99)
         town_stat = list()
         for town in towns:
-            cursor.execute("SELECT birth_date FROM citizens WHERE import_id = ? AND town = ?;", (import_id, town))
+            cursor.execute("SELECT birth_date FROM citizens WHERE import_id = %s AND town = %s;", (import_id, town))
             ages = [self.calculate_age(birth_date[0]) for birth_date in cursor.fetchall()]
             age_percentiles = [int(age_percentile) + 1 for age_percentile in percentile(ages, percentiles)]
             keys = ["town"] + ["p" + str(count_percentile) for count_percentile in percentiles]
