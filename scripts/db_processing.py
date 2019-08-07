@@ -238,10 +238,11 @@ class DBHelper(metaclass=Singleton):
         keys = [citizen.pop('id') for citizen in citizens]
         citizen_by_db_id = dict(zip(keys, citizens))
 
-        cursor.execute("SELECT c.id, r.id1 FROM citizens c, relatives r WHERE c.id = r.id2 AND c.import_id = %(import_id)s "
-                       "UNION "
-                       "SELECT c.id, r.id2 FROM citizens c, relatives r WHERE c.id = r.id1 AND c.import_id = %(import_id)s AND r.id1 != r.id2;",
-                       {"import_id": import_id})
+        cursor.execute(
+            "SELECT c.id, r.id1 FROM citizens c, relatives r WHERE c.id = r.id2 AND c.import_id = %(import_id)s "
+            "UNION "
+            "SELECT c.id, r.id2 FROM citizens c, relatives r WHERE c.id = r.id1 AND c.import_id = %(import_id)s AND r.id1 != r.id2;",
+            {"import_id": import_id})
         for pair in cursor.fetchall():
             citizen_by_db_id[pair[0]]['relatives'].append(citizen_by_db_id[pair[1]]['citizen_id'])
 
@@ -266,11 +267,15 @@ class DBHelper(metaclass=Singleton):
         except KeyError:
             pass
 
-        # get relatives, if patch_citizen_data contains relatives
+        # get and validate relatives, if patch_citizen_data contains relatives
         try:
             new_relatives = patch_citizen_data.pop('relatives')
         except KeyError:
             new_relatives = None
+        else:
+            for relative in new_relatives:
+                if not self.validate_citizen_id(import_id, relative):
+                    return None
 
         try:
             conn = psycopg2.connect(**self.DB_ACCOUNT)
@@ -279,8 +284,10 @@ class DBHelper(metaclass=Singleton):
             cursor.execute("SELECT id FROM citizens WHERE import_id = %s AND citizen_id = %s;", (import_id, citizen_id))
             citizen_db_id = cursor.fetchone()[0]
 
-            for key, value in patch_citizen_data.items():
-                cursor.execute("UPDATE citizens SET {}=%s WHERE id = %s;".format(key), (value, citizen_db_id))
+            update_text = "UPDATE citizens SET " + \
+                          ",".join([key + "=%(" + key + ")s" for key in patch_citizen_data.keys()]) + \
+                          "WHERE id = %(id)s;"
+            cursor.execute(update_text, {**patch_citizen_data, **{"id": citizen_db_id}})
 
             if new_relatives is not None:
                 cursor.execute("SELECT c.id FROM citizens c, relatives r "
@@ -298,15 +305,26 @@ class DBHelper(metaclass=Singleton):
                     new_relatives_db_id.append(cursor.fetchone()[0])
 
                 # delete old deleted relative
-                for relative_db_id in set(old_relatives_db_id) - (set(new_relatives_db_id) & set(old_relatives_db_id)):
-                    cursor.execute("DELETE FROM relatives WHERE "
-                                   "id1 = %(citizen_db_id)s AND id2 = %(relative_db_id)s OR "
-                                   "id1 = %(relative_db_id)s AND id2 = %(citizen_db_id)s;",
-                                   {'citizen_db_id': citizen_db_id, 'relative_db_id': relative_db_id})
+                delete_relatives_db_ids = [{'citizen_db_id': citizen_db_id,
+                                            'relative_db_id': relative_db_id}
+                                           for relative_db_id in set(old_relatives_db_id) - (
+                                                   set(new_relatives_db_id) & set(old_relatives_db_id))]
+                if delete_relatives_db_ids:
+                    extras.execute_batch(cursor,
+                                         "DELETE FROM relatives WHERE "
+                                         "id1 = %(citizen_db_id)s AND id2 = %(relative_db_id)s OR "
+                                         "id1 = %(relative_db_id)s AND id2 = %(citizen_db_id)s;",
+                                         delete_relatives_db_ids)
 
                 # add new added relatives
-                for relative_db_id in set(new_relatives_db_id) - (set(new_relatives_db_id) & set(old_relatives_db_id)):
-                    cursor.execute("INSERT INTO relatives VALUES (%s, %s);", (citizen_db_id, relative_db_id))
+                insert_relatives_db_ids = [{'citizen_db_id': citizen_db_id,
+                                            'relative_db_id': relative_db_id}
+                                           for relative_db_id in set(new_relatives_db_id) - (
+                                                       set(new_relatives_db_id) & set(old_relatives_db_id))]
+                if insert_relatives_db_ids:
+                    extras.execute_batch(cursor,
+                                         "INSERT INTO relatives VALUES (%(citizen_db_id)s, %(relative_db_id)s);",
+                                         insert_relatives_db_ids)
 
         except (psycopg2.DatabaseError, psycopg2.Warning):
             conn.rollback()
