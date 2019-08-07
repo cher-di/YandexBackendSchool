@@ -122,6 +122,7 @@ class DBHelper(metaclass=Singleton):
     
                         CREATE INDEX IF NOT EXISTS relatives_idx_1 ON relatives (id1);
                         CREATE INDEX IF NOT EXISTS relatives_idx_2 ON relatives (id2);
+                        CREATE INDEX IF NOT EXISTS citizens_import_id_idx ON citizens(import_id);
                         """)
             cursor.close()
             conn.commit()
@@ -159,36 +160,29 @@ class DBHelper(metaclass=Singleton):
 
     def import_citizens(self, citizens: dict) -> int:
         # check citizens
-        before = time()
         try:
             validate(citizens, self.IMPORT_SCHEMA)
         except ValidationError:
             return None
-        print("Validated frame:", time() - before)
 
         citizens = citizens['citizens']
 
         # check relatives
-        before = time()
         relatives_ids = {citizen['citizen_id']: citizen['relatives'] for citizen in citizens}
         for citizen_id, citizen_relatives_ids in relatives_ids.items():
             for relative_id in citizen_relatives_ids:
                 if citizen_id not in relatives_ids[relative_id]:
                     return None
-        print("Validated relatives:", time() - before)
 
         try:
             # INSERT INTO imports
-            before = time()
             conn = psycopg2.connect(**self.DB_ACCOUNT)
             cursor = conn.cursor()
             cursor.execute("INSERT INTO imports (import_time) VALUES (%s) RETURNING import_id;",
                            (datetime.datetime.now().isoformat(' ', 'milliseconds'),))
             import_id = cursor.fetchone()[0]
-            print("Inserted import:", time() - before)
 
             # INSERT INTO citizens
-            before = time()
             for citizen in citizens:
                 citizen['import_id'] = import_id
                 citizen['birth_date'] = self.json_date_to_postrgesql_date(citizen['birth_date'])
@@ -196,10 +190,8 @@ class DBHelper(metaclass=Singleton):
                                   "INSERT INTO citizens (import_id, citizen_id, town, street, building, apartment, name, birth_date, gender) VALUES %s;",
                                   citizens,
                                   "(%(import_id)s, %(citizen_id)s, %(town)s, %(street)s, %(building)s, %(apartment)s, %(name)s, %(birth_date)s, %(gender)s)")
-            print("Inserted citizens:", time() - before)
 
             # INSERT INTO relatives
-            before = time()
             cursor.execute("SELECT id, citizen_id FROM citizens WHERE import_id = %s;", (import_id,))
             query_result = array(cursor.fetchall())
             citizen_id_to_citizen_db_id = dict(zip(query_result[:, 1].tolist(), query_result[:, 0].tolist()))
@@ -212,13 +204,10 @@ class DBHelper(metaclass=Singleton):
                         relatives_db_ids.append((citizen_id_to_citizen_db_id[citizen_id],
                                                  citizen_id_to_citizen_db_id[relative_id]))
                 worked_relatives.add(citizen_id)
-            print("Constructed data to INSERT INTO relatives:", time() - before)
-            before = time()
             extras.execute_values(cursor,
                                   "INSERT INTO relatives (id1, id2) VALUES %s;",
                                   relatives_db_ids,
                                   "(%s, %s)")
-            print("Inserted relatives:", time() - before)
         except (psycopg2.DatabaseError, psycopg2.Warning) as e:
             conn.rollback()
             print(e.__class__.__name__, e)
@@ -240,16 +229,22 @@ class DBHelper(metaclass=Singleton):
         cursor.execute("SELECT id, citizen_id, town, street, building, apartment, name, birth_date, gender "
                        "FROM citizens WHERE import_id = %s;", (import_id,))
         citizens_data = cursor.fetchall()
-
         keys = ['id'] + [key for key in self.IMPORT_CITIZEN_SCHEMA['properties'].keys() if key != 'relatives']
         citizens = [dict(zip(keys, values)) for values in citizens_data]
+
         for citizen in citizens:
+            citizen['relatives'] = []
             citizen['birth_date'] = self.postgresql_date_to_json_date(citizen['birth_date'])
-            cursor.execute("SELECT c.citizen_id FROM citizens c, relatives r "
-                           "WHERE r.id1 = %(id)s AND r.id2 = c.id OR r.id1 = c.id AND r.id2 = %(id)s",
-                           {'id': citizen['id']})
-            citizen['relatives'] = [relative[0] for relative in cursor.fetchall()]
-            citizen.pop('id')
+        keys = [citizen.pop('id') for citizen in citizens]
+        citizen_by_db_id = dict(zip(keys, citizens))
+
+        cursor.execute("SELECT c.id, r.id1 FROM citizens c, relatives r WHERE c.id = r.id2 AND c.import_id = %(import_id)s "
+                       "UNION "
+                       "SELECT c.id, r.id2 FROM citizens c, relatives r WHERE c.id = r.id1 AND c.import_id = %(import_id)s AND r.id1 != r.id2;",
+                       {"import_id": import_id})
+        for pair in cursor.fetchall():
+            citizen_by_db_id[pair[0]]['relatives'].append(citizen_by_db_id[pair[1]]['citizen_id'])
+
         cursor.close()
         conn.close()
         return citizens
@@ -339,15 +334,20 @@ class DBHelper(metaclass=Singleton):
         conn = psycopg2.connect(**self.DB_ACCOUNT)
         cursor = conn.cursor()
         cursor.execute("SELECT id, citizen_id, birth_date FROM citizens WHERE import_id = %s;", (import_id,))
-        citizens = {citizen_data[0]: {'citizen_id': citizen_data[1], 'birth_date': citizen_data[2]}
+        citizens = {citizen_data[0]: {'citizen_id': citizen_data[1], 'birth_date': citizen_data[2], 'relatives': []}
                     for citizen_data in cursor.fetchall()}
+
+        cursor.execute(
+            "SELECT c.id, r.id1 FROM citizens c, relatives r WHERE c.id = r.id2 AND c.import_id = %(import_id)s "
+            "UNION "
+            "SELECT c.id, r.id2 FROM citizens c, relatives r WHERE c.id = r.id1 AND c.import_id = %(import_id)s AND r.id1 != r.id2;",
+            {"import_id": import_id})
+        for pair in cursor.fetchall():
+            citizens[pair[0]]['relatives'].append(pair[1])
+
         presents_num_per_month = {month: defaultdict(lambda: 0) for month in range(1, 13)}
-        for citizen_db_id in citizens.keys():
-            cursor.execute("SELECT id1 FROM relatives WHERE id2 = %(id)s "
-                           "UNION "
-                           "SELECT id2 FROM relatives WHERE id1 = %(id)s;", {"id": citizen_db_id})
-            relatives_db_id = [relative_db_id[0] for relative_db_id in cursor.fetchall()]
-            for relative_db_id in relatives_db_id:
+        for citizen_db_id, citizen in citizens.items():
+            for relative_db_id in citizen['relatives']:
                 relative_birth_date = citizens[relative_db_id]['birth_date']
                 presents_num_per_month[relative_birth_date.month][citizens[citizen_db_id]['citizen_id']] += 1
         cursor.close()
