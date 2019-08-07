@@ -2,7 +2,7 @@ import datetime
 import psycopg2
 from collections import defaultdict
 from numpy import percentile, array
-from jsonschema import validate, ValidationError
+from fastjsonschema import validate, compile, JsonSchemaException
 from time import time
 from psycopg2 import extras
 
@@ -160,9 +160,10 @@ class DBHelper(metaclass=Singleton):
 
     def import_citizens(self, citizens: dict) -> int:
         # check citizens
+        validate_fast = compile(self.IMPORT_SCHEMA)
         try:
-            validate(citizens, self.IMPORT_SCHEMA)
-        except ValidationError:
+            validate_fast(citizens)
+        except JsonSchemaException:
             return None
 
         citizens = citizens['citizens']
@@ -258,7 +259,7 @@ class DBHelper(metaclass=Singleton):
         # check patch_citizen_data
         try:
             validate(patch_citizen_data, self.CHANGE_CITIZEN_SCHEMA)
-        except ValidationError:
+        except JsonSchemaException:
             return None
 
         # change birth_date to postgresql format, if patch_citizen_data contains birth_date
