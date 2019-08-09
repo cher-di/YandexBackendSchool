@@ -1,7 +1,7 @@
 import datetime
 import psycopg2
 from collections import defaultdict
-from numpy import percentile, array
+from numpy import percentile, array, ceil
 from fastjsonschema import validate, compile, JsonSchemaException
 from time import time
 from psycopg2 import extras
@@ -79,15 +79,10 @@ class DBHelper(metaclass=Singleton):
         "additionalProperties": False
     }
     GENDER = {'male', 'female'}
-    DB_ACCOUNT = {
-        "user": "ybs_rest_user",
-        "password": "123456qwerty",
-        "host": "127.0.0.1",
-        "port": "5432",
-        "database": "ybs_rest_db"
-    }
 
-    def __init__(self):
+    def __init__(self, **kwargs):
+        self.DB_ACCOUNT = kwargs
+
         try:
             conn = psycopg2.connect(**self.DB_ACCOUNT)
             cursor = conn.cursor()
@@ -321,11 +316,12 @@ class DBHelper(metaclass=Singleton):
                 insert_relatives_db_ids = [{'citizen_db_id': citizen_db_id,
                                             'relative_db_id': relative_db_id}
                                            for relative_db_id in set(new_relatives_db_id) - (
-                                                       set(new_relatives_db_id) & set(old_relatives_db_id))]
+                                                   set(new_relatives_db_id) & set(old_relatives_db_id))]
                 if insert_relatives_db_ids:
-                    extras.execute_batch(cursor,
-                                         "INSERT INTO relatives VALUES (%(citizen_db_id)s, %(relative_db_id)s);",
-                                         insert_relatives_db_ids)
+                    extras.execute_values(cursor,
+                                          "INSERT INTO relatives VALUES %s;",
+                                          insert_relatives_db_ids,
+                                          "(%(citizen_db_id)s, %(relative_db_id)s)")
 
         except (psycopg2.DatabaseError, psycopg2.Warning):
             conn.rollback()
@@ -397,7 +393,7 @@ class DBHelper(metaclass=Singleton):
         for town in towns:
             cursor.execute("SELECT birth_date FROM citizens WHERE import_id = %s AND town = %s;", (import_id, town))
             ages = [self.calculate_age(birth_date[0]) for birth_date in cursor.fetchall()]
-            age_percentiles = [int(age_percentile) + 1 for age_percentile in percentile(ages, percentiles)]
+            age_percentiles = ceil(percentile(ages, percentiles)).astype(int).tolist()
             keys = ["town"] + ["p" + str(count_percentile) for count_percentile in percentiles]
             values = [town] + age_percentiles
             town_stat.append(dict(zip(keys, values)))
