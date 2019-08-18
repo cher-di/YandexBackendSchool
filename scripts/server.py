@@ -1,9 +1,23 @@
+import logging
+import os
+from pathlib import Path
 from flask import Flask, request, Response, json
 from db_processing import DBHelper
-from sys import exit
+from datetime import date
 
 app = Flask(__name__)
-db_helper: DBHelper
+db_helper = DBHelper(user="ybs_rest_user",
+                     password="123456qwerty",
+                     host="127.0.0.1",
+                     port="5432",
+                     database="ybs_rest_db")
+
+# logging
+logs_dir_path = str(Path(__file__).parent.parent.absolute()) + '/logs/'
+if not os.path.exists(logs_dir_path):
+    os.mkdir(logs_dir_path)
+logging.basicConfig(filename=logs_dir_path + date.today().strftime("%Y-%m-%d") + '.log',
+                    level=logging.INFO)
 
 
 @app.route('/imports', methods=['POST'])
@@ -62,14 +76,4 @@ def get_town_stat(import_id):
 
 
 if __name__ == '__main__':
-    try:
-        db_helper = DBHelper(user="ybs_rest_user",
-                             password="123456qwerty",
-                             host="127.0.0.1",
-                             port="5432",
-                             database="ybs_rest_db")
-    except Exception as e:
-        print(e)
-        exit()
-    else:
-        app.run(host='0.0.0.0', port=8080)
+    app.run(host='0.0.0.0', port=8080)
