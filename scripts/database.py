@@ -79,6 +79,7 @@ class DBHelper(metaclass=Singleton):
         "additionalProperties": False
     }
     SQL_FILES_DIR = str(Path(__file__).parent.parent.absolute()) + '/sql_files/'
+    _COMPILED_IMPORT_SCHEMA_VALIDATOR = compile(IMPORT_SCHEMA)
 
     def __init__(self, **kwargs):
         self.DB_ACCOUNT = kwargs
@@ -122,11 +123,11 @@ class DBHelper(metaclass=Singleton):
         conn.close()
         return result is not None
 
+
     def import_citizens(self, citizens: dict) -> int:
         # check citizens
-        validate_fast = compile(self.IMPORT_SCHEMA)
         try:
-            validate_fast(citizens)
+            self.__class__._COMPILED_IMPORT_SCHEMA_VALIDATOR(citizens)
         except JsonSchemaException:
             return None
 
@@ -249,7 +250,7 @@ class DBHelper(metaclass=Singleton):
             citizen_db_id = cursor.fetchone()[0]
 
             update_text = "UPDATE citizens SET " + \
-                          ",".join(map(lambda key: key + "=%(" + key + ")s", patch_citizen_data.keys())) + \
+                          ",".join(map(lambda key: "{0}=%({0})s".format(key), patch_citizen_data.keys())) + \
                           "WHERE id = %(id)s;"
             cursor.execute(update_text, {**patch_citizen_data, **{"id": citizen_db_id}})
 

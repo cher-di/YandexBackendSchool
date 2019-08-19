@@ -1,23 +1,21 @@
 import logging
 import os
-from pathlib import Path
+import config
 from flask import Flask, request, Response, json
-from db_processing import DBHelper
+from database import DBHelper
 from datetime import date, datetime
 
-app = Flask(__name__)
-db_helper = DBHelper(user="ybs_rest_user",
-                     password="123456qwerty",
-                     host="127.0.0.1",
-                     port="5432",
-                     database="ybs_rest_db")
 
-# logging
-logs_dir_path = str(Path(__file__).parent.parent.absolute()) + '/logs/'
-if not os.path.exists(logs_dir_path):
-    os.mkdir(logs_dir_path)
-logging.basicConfig(filename=logs_dir_path + date.today().strftime("%Y-%m-%d") + '.log',
-                    level=logging.INFO)
+def config_logs(logs_dir_path: str):
+    if not os.path.exists(logs_dir_path):
+        os.mkdir(logs_dir_path)
+    logging.basicConfig(filename=logs_dir_path + date.today().strftime("%Y-%m-%d") + '.log',
+                        level=logging.INFO)
+
+
+app = Flask(__name__)
+db_helper = DBHelper(**config.get_db_config())
+config_logs(config.get_logs_dir_path_config())
 
 
 @app.route('/imports', methods=['POST'])

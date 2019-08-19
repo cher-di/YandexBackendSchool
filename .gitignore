@@ -1,8 +1,8 @@
 # Idea
 .idea/
 
-# Database file
-*.db
+# Config files
+*.ini
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
