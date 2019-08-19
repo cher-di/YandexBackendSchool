@@ -175,7 +175,6 @@ class DBHelper(metaclass=Singleton):
                                   "(%s, %s)")
         except (psycopg2.DatabaseError, psycopg2.Warning) as e:
             conn.rollback()
-            print(e.__class__.__name__, e)
             return None
         else:
             conn.commit()
@@ -194,7 +193,7 @@ class DBHelper(metaclass=Singleton):
         cursor.execute("SELECT id, citizen_id, town, street, building, apartment, name, birth_date, gender "
                        "FROM citizens WHERE import_id = %s;", (import_id,))
         citizens_data = cursor.fetchall()
-        keys = ['id'] + [key for key in self.IMPORT_CITIZEN_SCHEMA['properties'].keys() if key != 'relatives']
+        keys = ['id'] + list(filter(lambda x: x != 'relatives', self.IMPORT_CITIZEN_SCHEMA['properties']))
         citizens = [dict(zip(keys, values)) for values in citizens_data]
 
         for citizen in citizens:
@@ -250,7 +249,7 @@ class DBHelper(metaclass=Singleton):
             citizen_db_id = cursor.fetchone()[0]
 
             update_text = "UPDATE citizens SET " + \
-                          ",".join([key + "=%(" + key + ")s" for key in patch_citizen_data.keys()]) + \
+                          ",".join(map(lambda key: key + "=%(" + key + ")s", patch_citizen_data.keys())) + \
                           "WHERE id = %(id)s;"
             cursor.execute(update_text, {**patch_citizen_data, **{"id": citizen_db_id}})
 
@@ -347,7 +346,10 @@ class DBHelper(metaclass=Singleton):
     @staticmethod
     def calculate_age(born: datetime.date) -> int:
         today = datetime.date.today()
-        return today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+        if (today.month, today.day) < (born.month, born.day):
+            return today.year - born.year - 1
+        else:
+            return today.year - born.year
 
     def get_town_stat(self, import_id: int) -> list:
         if not self.validate_import_id(import_id):
@@ -363,7 +365,7 @@ class DBHelper(metaclass=Singleton):
             cursor.execute("SELECT birth_date FROM citizens WHERE import_id = %s AND town = %s;", (import_id, town))
             ages = [self.calculate_age(birth_date[0]) for birth_date in cursor.fetchall()]
             age_percentiles = ceil(percentile(ages, percentiles)).astype(int).tolist()
-            keys = ["town"] + ["p" + str(count_percentile) for count_percentile in percentiles]
+            keys = ["town"] + list(map(lambda x: "p" + str(x), percentiles))
             values = [town] + age_percentiles
             town_stat.append(dict(zip(keys, values)))
         cursor.close()

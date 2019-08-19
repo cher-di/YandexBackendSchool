@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from flask import Flask, request, Response, json
 from db_processing import DBHelper
-from datetime import date
+from datetime import date, datetime
 
 app = Flask(__name__)
 db_helper = DBHelper(user="ybs_rest_user",
@@ -73,6 +73,14 @@ def get_town_stat(import_id):
         return Response(response=json.dumps({'data': town_stat}),
                         status=200,
                         mimetype='application/json')
+
+
+@app.after_request
+def save_logs(response):
+    formatted_time = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+    values_for_logging = tuple(map(str, (formatted_time, request.path, response.status_code)))
+    logging.info("*".join(values_for_logging))
+    return response
 
 
 if __name__ == '__main__':
