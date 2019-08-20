@@ -89,11 +89,13 @@ class DBHelper(metaclass=Singleton):
             cursor = conn.cursor()
             with open(self.SQL_FILES_DIR + 'create_tables.sql', 'r') as create_tables_sql_file:
                 cursor.execute(create_tables_sql_file.read())
-            cursor.close()
-            conn.commit()
-            conn.close()
         except psycopg2.Error:
             raise Exception("Failed to connect to database")
+        else:
+            conn.commit()
+        finally:
+            cursor.close()
+            conn.close()
 
     @staticmethod
     def json_date_to_postrgesql_date(date: str) -> str:
@@ -105,24 +107,20 @@ class DBHelper(metaclass=Singleton):
 
     def validate_import_id(self, import_id: int) -> bool:
         # validate if import_id exists
-        conn = psycopg2.connect(**self.DB_ACCOUNT)
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM imports WHERE import_id = %s;", (import_id,))
-        result = cursor.fetchone()
-        cursor.close()
-        conn.close()
+        with psycopg2.connect(**self.DB_ACCOUNT) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT * FROM imports WHERE import_id = %s;", (import_id,))
+                result = cursor.fetchone()
         return result is not None
 
     def validate_citizen_id(self, import_id: int, citizen_id: int) -> bool:
         # validate if citizen_id with import_id exists
-        conn = psycopg2.connect(**self.DB_ACCOUNT)
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM citizens WHERE import_id = %s AND citizen_id = %s;", (import_id, citizen_id))
-        result = cursor.fetchone()
-        cursor.close()
-        conn.close()
+        with psycopg2.connect(**self.DB_ACCOUNT) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT * FROM citizens WHERE import_id = %s AND citizen_id = %s;",
+                               (import_id, citizen_id))
+                result = cursor.fetchone()
         return result is not None
-
 
     def import_citizens(self, citizens: dict) -> int:
         # check citizens
@@ -189,30 +187,28 @@ class DBHelper(metaclass=Singleton):
         if not self.validate_import_id(import_id):
             return None
 
-        conn = psycopg2.connect(**self.DB_ACCOUNT)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, citizen_id, town, street, building, apartment, name, birth_date, gender "
-                       "FROM citizens WHERE import_id = %s;", (import_id,))
-        citizens_data = cursor.fetchall()
-        keys = ['id'] + list(filter(lambda x: x != 'relatives', self.IMPORT_CITIZEN_SCHEMA['properties']))
-        citizens = [dict(zip(keys, values)) for values in citizens_data]
+        with psycopg2.connect(**self.DB_ACCOUNT) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT id, citizen_id, town, street, building, apartment, name, birth_date, gender "
+                               "FROM citizens WHERE import_id = %s;", (import_id,))
+                citizens_data = cursor.fetchall()
+                keys = ['id'] + list(filter(lambda x: x != 'relatives', self.IMPORT_CITIZEN_SCHEMA['properties']))
+                citizens = [dict(zip(keys, values)) for values in citizens_data]
 
-        for citizen in citizens:
-            citizen['relatives'] = []
-            citizen['birth_date'] = self.postgresql_date_to_json_date(citizen['birth_date'])
-        keys = [citizen.pop('id') for citizen in citizens]
-        citizen_by_db_id = dict(zip(keys, citizens))
+                for citizen in citizens:
+                    citizen['relatives'] = []
+                    citizen['birth_date'] = self.postgresql_date_to_json_date(citizen['birth_date'])
+                keys = [citizen.pop('id') for citizen in citizens]
+                citizen_by_db_id = dict(zip(keys, citizens))
 
-        cursor.execute(
-            "SELECT c.id, r.id1 FROM citizens c, relatives r WHERE c.id = r.id2 AND c.import_id = %(import_id)s "
-            "UNION "
-            "SELECT c.id, r.id2 FROM citizens c, relatives r WHERE c.id = r.id1 AND c.import_id = %(import_id)s AND r.id1 != r.id2;",
-            {"import_id": import_id})
-        for pair in cursor.fetchall():
-            citizen_by_db_id[pair[0]]['relatives'].append(citizen_by_db_id[pair[1]]['citizen_id'])
+                cursor.execute(
+                    "SELECT c.id, r.id1 FROM citizens c, relatives r WHERE c.id = r.id2 AND c.import_id = %(import_id)s "
+                    "UNION "
+                    "SELECT c.id, r.id2 FROM citizens c, relatives r WHERE c.id = r.id1 AND c.import_id = %(import_id)s AND r.id1 != r.id2;",
+                    {"import_id": import_id})
+                for pair in cursor.fetchall():
+                    citizen_by_db_id[pair[0]]['relatives'].append(citizen_by_db_id[pair[1]]['citizen_id'])
 
-        cursor.close()
-        conn.close()
         return citizens
 
     def change_citizen_data(self, import_id: int, citizen_id: int, patch_citizen_data: dict) -> dict:
@@ -315,27 +311,25 @@ class DBHelper(metaclass=Singleton):
         if not self.validate_import_id(import_id):
             return None
 
-        conn = psycopg2.connect(**self.DB_ACCOUNT)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, citizen_id, birth_date FROM citizens WHERE import_id = %s;", (import_id,))
-        citizens = {citizen_data[0]: {'citizen_id': citizen_data[1], 'birth_date': citizen_data[2], 'relatives': []}
-                    for citizen_data in cursor.fetchall()}
+        with psycopg2.connect(**self.DB_ACCOUNT) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT id, citizen_id, birth_date FROM citizens WHERE import_id = %s;", (import_id,))
+                citizens = {citizen_data[0]: {'citizen_id': citizen_data[1], 'birth_date': citizen_data[2], 'relatives': []}
+                            for citizen_data in cursor.fetchall()}
 
-        cursor.execute(
-            "SELECT c.id, r.id1 FROM citizens c, relatives r WHERE c.id = r.id2 AND c.import_id = %(import_id)s "
-            "UNION "
-            "SELECT c.id, r.id2 FROM citizens c, relatives r WHERE c.id = r.id1 AND c.import_id = %(import_id)s AND r.id1 != r.id2;",
-            {"import_id": import_id})
-        for pair in cursor.fetchall():
-            citizens[pair[0]]['relatives'].append(pair[1])
+                cursor.execute(
+                    "SELECT c.id, r.id1 FROM citizens c, relatives r WHERE c.id = r.id2 AND c.import_id = %(import_id)s "
+                    "UNION "
+                    "SELECT c.id, r.id2 FROM citizens c, relatives r WHERE c.id = r.id1 AND c.import_id = %(import_id)s AND r.id1 != r.id2;",
+                    {"import_id": import_id})
+                for pair in cursor.fetchall():
+                    citizens[pair[0]]['relatives'].append(pair[1])
 
-        presents_num_per_month = {month: defaultdict(lambda: 0) for month in range(1, 13)}
-        for citizen_db_id, citizen in citizens.items():
-            for relative_db_id in citizen['relatives']:
-                relative_birth_date = citizens[relative_db_id]['birth_date']
-                presents_num_per_month[relative_birth_date.month][citizens[citizen_db_id]['citizen_id']] += 1
-        cursor.close()
-        conn.close()
+                presents_num_per_month = {month: defaultdict(lambda: 0) for month in range(1, 13)}
+                for citizen_db_id, citizen in citizens.items():
+                    for relative_db_id in citizen['relatives']:
+                        relative_birth_date = citizens[relative_db_id]['birth_date']
+                        presents_num_per_month[relative_birth_date.month][citizens[citizen_db_id]['citizen_id']] += 1
 
         presents_num_per_month_result = dict()
         for month in presents_num_per_month.keys():
@@ -356,20 +350,18 @@ class DBHelper(metaclass=Singleton):
         if not self.validate_import_id(import_id):
             return None
 
-        conn = psycopg2.connect(**self.DB_ACCOUNT)
-        cursor = conn.cursor()
-        cursor.execute("SELECT DISTINCT town FROM citizens WHERE import_id = %s;", (import_id,))
-        towns = [town[0] for town in cursor.fetchall()]
-        percentiles = (50, 75, 99)
-        town_stat = []
-        for town in towns:
-            cursor.execute("SELECT birth_date FROM citizens WHERE import_id = %s AND town = %s;", (import_id, town))
-            ages = [self.calculate_age(birth_date[0]) for birth_date in cursor.fetchall()]
-            age_percentiles = ceil(percentile(ages, percentiles)).astype(int).tolist()
-            keys = ["town"] + list(map(lambda x: "p" + str(x), percentiles))
-            values = [town] + age_percentiles
-            town_stat.append(dict(zip(keys, values)))
-        cursor.close()
-        conn.close()
+        with psycopg2.connect(**self.DB_ACCOUNT) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT DISTINCT town FROM citizens WHERE import_id = %s;", (import_id,))
+                towns = [town[0] for town in cursor.fetchall()]
+                percentiles = (50, 75, 99)
+                town_stat = []
+                for town in towns:
+                    cursor.execute("SELECT birth_date FROM citizens WHERE import_id = %s AND town = %s;", (import_id, town))
+                    ages = [self.calculate_age(birth_date[0]) for birth_date in cursor.fetchall()]
+                    age_percentiles = ceil(percentile(ages, percentiles)).astype(int).tolist()
+                    keys = ["town"] + list(map(lambda x: "p" + str(x), percentiles))
+                    values = [town] + age_percentiles
+                    town_stat.append(dict(zip(keys, values)))
 
         return town_stat

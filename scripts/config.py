@@ -28,14 +28,14 @@ def get_config() -> dict:
     return config_dict
 
 
-def get_db_config() -> dict:
+def get_db_requisites() -> dict:
     config_dict = get_config()
     keys = ('user', 'password', 'host', 'port', 'database')
     config_dict = {key: config_dict[key] for key in keys}
     return config_dict
 
 
-def get_logs_dir_path_config() -> dict:
+def get_logs_dir_path() -> dict:
     config_dict = get_config()
     return config_dict['logs_dir_path']
 
