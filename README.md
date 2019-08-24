@@ -3,61 +3,92 @@
 
 ## Запуск сервера на машине с Ubuntu/Debian
 1.Устанавливаем следующие пакеты:
-   - Python (3.5+)  
+   - Python (3.6+)  
    - PostgreSQL (9.6+)  
    - Git  
    - libpq-dev  
    - postgresql-server-dev-all
    
-2.После этого потребуется склонировать репозиторий на машину и создать виртуальное окружение Python
-```bash
-foo@bar:~$ mkdir ybs
-foo@bar:~$ cd ybs/
-foo@bar:~$ sudo pip3 install virtualenv
-foo@bar:~/ybs$ python3 -m venv ybs_venv
-foo@bar:~/ybs$ git clone https_url
-```
-> Активировать виртуальное окружение Python: 
->```bash
->foo@bar~/ybs$ source ybs_venv/bin/activate
->```
-> Декативировать виртуальное окружение Python:
->```bash
->foo@bar:~/ybs$ deacivate 
->```
-
-3.Устанавливаем в виртуальное окружение следующие Python пакеты:
-    - psycopg2
-    - fastjsonschema
-    - flask
-    - numpy
-    - gunicorn
-```bash
-(ybs_venv) foo@bar:~$ pip3 install psycopg2 fastjsonschema flask numpy gunicorn
+2.Клонируем репозиторий на машину
+```shell script
+user@machine:~$ mkdir YandexBackendSchool
+user@machine:~$ cd YandexBackendSchool/
+user@machine:~/YandexBackendSchool$ git clone https://github.com/cher-di/YandexBackendSchool.git
 ```
 
-4.Создаем базу данных `ybs_rest_db` и пользователя `ybs_rest_user`
-```bash
-foo@bar:~$ sudo -u postgres psql postgres
+3.Создаем вирутальное окржение Python и устанавливаем в него все необходимые модули:
+  - psycopg2
+  - fastjsonschema
+  - flask
+  - numpy
+  - gunicorn
+```shell script
+user@machine:~/YandexBackendSchool$ pip3 install virtualenv
+user@machine:~/YandexBackendSchool$ python3 -m venv ybs_venv
+user@machine:~/YandexBackendSchool$ source ybs_venv/bin/activate
+(ybs_venv) user@machine:~/YandexBackendSchool$ pip3 install --upgrade pip setuptools
+(ybs_venv) user@machine:~/YandexBackendSchool$ pip3 install psycopg2 fastjsonschema flask numpy gunicorn
+```
+
+4.Создаем базу пользователя и базу данных:
+```shell script
+user@machine:~$ sudo -u postgres psql postgres
 ```
 ```postgresql
 CREATE ROLE ybs_user LOGIN PASSWORD 'ybs_password' CREATEDB;
 CREATE DATABASE ybs_db WITH owner = ybs_user;
 ```
 
-5.Активируем виртуальное окружение и переходим в папку `scripts/`, после чего генерируем config.ini:
-```bash
-(ybs_venv) foo@bar:~/ybs/YandexBackendSchool/scripts$ python3 config.py
-(ybs_venv) foo@bar:~/ybs/YandexBackendSchoolscripts$ gunicorn --bind=0.0.0.0:8080 server:app
+5.Чтобы сгенерировать файл конфигурации */home/user/YandexBackendSchool/YandexBackendSchool/config.ini*, запускаем скрипт *config.py*:
+```shell script
+(ybs_venv) user@machine:~/YandexBackendSchool/YandexBackendSchool/scripts$ python3 config.py
 ```
-> Сервер сам создаст таблицы для баз данных и папку для файлов логов
+После того, как файл конфигурации будет сгенерирован, записываем в него верные значения вместо значений по умолчанию.
+
+6.Запускаем скрипт проверки конфигурации *test_configuration.py*:
+```shell script
+(ybs_venv) user@machine:~/YandexBackendSchool/YandexBackendSchool/scripts$ python3 test_configuration.py
+```
+Если результат исполнения скрипта выдал везде **OK**, то можно приступать к следующему шагу.  
+В противном случае скрипт выдаст ошибку **FAIL**.
+
+7.Тестируем сервер:
+```shell script
+(ybs_venv) user@machine:~/YandexBackendSchool/YandexBackendSchool/scripts$ gunicorn -c gunicorn_configuration.py server:app
+```
+Если все нормально, то переходим к следующему шагу.  
+Не забываем отключить виртуальное окружение:
+```shell script
+(ybs_venv) user@machine:~/YandexBackendSchool/YandexBackendSchool/scripts$ deactivate
+```
+8.Создаем файл */etc/systemd/system/ybs.service*, для запуска демона нашего приложения:
+```text
+[Unit]
+Description=Gunicorn instance to server YandexBackendSchoolApp
+After=network.target
+[Service]
+User=dmitry
+Group=www-data
+WorkingDirectory=/home/user/YandexBackendSchool/YandexBackendSchool/scripts
+Environment="PATH=/home/user/YandexBackendSchool/ybs_venv/bin"
+ExecStart=/home/user/YandexBackendSchool/ybs_venv/bin/gunicorn -c gunicorn_config.py server:app
+[Install]
+WantedBy=multi-user.target
+```
+9.Запускаем демона и делаем его автозапускаемым при запуске машины
+```shell script
+user@machine:~$ sudo systemctl daemon-reload
+user@machine:~$ sudo systemctl start ybs
+user@machine:~$ sudo systemctl enable ybs
+```
+После этого сервер развернут и готов к работе
 
 ## Запуск *.sql файлов в терминале
-Чтобы запустить `*.sql` файлы в терминале, необходимо открыть терминал в папке `sql_files/` и ввести следующую команду 
+Чтобы запустить *\*.sql* файлы в терминале, необходимо открыть терминал в папке *sql_files/* и ввести следующую команду 
 ```console 
-foo@bar:~$ psql -h localhost -d ybs_rest_db -U ybs_rest_user -p 5432 -a -q -f sql_file.sql
+user@machine:~$ psql -h localhost -d ybs_rest_db -U ybs_rest_user -p 5432 -a -q -f sql_file.sql
 ```
-> Для создания таблиц необходимо использовать соотвественно: `create_tables.sql`  
-> Для полной очистки базы данных (удаление всех данных и таблиц): `clear_databse.sql`  
+> Для создания таблиц необходимо использовать соотвественно: *create_tables.sql*  
+> Для полной очистки базы данных (удаление всех данных и таблиц): *clear_databse.sql*  
 
-За дополнительной информацией по поводу запуска `*.sql` файлов через терминал обратитесь на [сайт](https://www.postgresql.org/).
+За дополнительной информацией по поводу запуска *\*.sql* файлов через терминал обратитесь на [сайт](https://www.postgresql.org/).
