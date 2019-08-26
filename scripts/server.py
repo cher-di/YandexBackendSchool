@@ -1,20 +1,19 @@
-import logging
 import config
 from flask import Flask, request, Response, json
-from database import DBHelper
+from database import DBHelper, DBHelperError
 from datetime import date, datetime
 
 app = Flask(__name__)
 db_helper = DBHelper(**config.get_db_requisites())
-logging.basicConfig(filename=config.get_logs_dir_path() + date.today().strftime("%Y-%m-%d") + '.log',
-                    level=logging.INFO)
+logs_dir_path = config.get_logs_dir_path()
 
 
 @app.route('/imports', methods=['POST'])
 def import_data():
-    import_id = db_helper.import_citizens(request.json)
-    if import_id is None:
-        return Response(status=400)
+    try:
+        import_id = db_helper.import_citizens(request.json)
+    except DBHelperError as e:
+        return Response(response=str(e), status=400)
     else:
         return Response(response=json.dumps({"data": {"import_id": import_id}}),
                         status=201,
@@ -23,9 +22,10 @@ def import_data():
 
 @app.route('/imports/<int:import_id>/citizens/<int:citizen_id>', methods=['PATCH'])
 def change_citizen_data(import_id, citizen_id):
-    citizen_data = db_helper.change_citizen_data(import_id, citizen_id, request.json)
-    if citizen_data is None:
-        return Response(status=400)
+    try:
+        citizen_data = db_helper.change_citizen(import_id, citizen_id, request.json)
+    except DBHelperError as e:
+        return Response(response=str(e), status=400)
     else:
         return Response(response=json.dumps({"data": citizen_data}),
                         status=200,
@@ -34,9 +34,10 @@ def change_citizen_data(import_id, citizen_id):
 
 @app.route('/imports/<int:import_id>/citizens', methods=['GET'])
 def get_citizens_data(import_id):
-    citizens = db_helper.get_imported_citizens(import_id)
-    if citizens is None:
-        return Response(status=400)
+    try:
+        citizens = db_helper.get_citizens(import_id)
+    except DBHelperError as e:
+        return Response(response=str(e), status=400)
     else:
         return Response(response=json.dumps({"data": citizens}),
                         status=200,
@@ -45,9 +46,10 @@ def get_citizens_data(import_id):
 
 @app.route('/imports/<int:import_id>/citizens/birthdays', methods=['GET'])
 def get_presents_num_per_month(import_id):
-    presents_num_per_month = db_helper.get_presents_num_per_month(import_id)
-    if presents_num_per_month is None:
-        return Response(status=400)
+    try:
+        presents_num_per_month = db_helper.get_presents_num_per_month(import_id)
+    except DBHelperError as e:
+        return Response(response=str(e), status=400)
     else:
         return Response(response=json.dumps({'data': presents_num_per_month}),
                         status=200,
@@ -56,9 +58,10 @@ def get_presents_num_per_month(import_id):
 
 @app.route('/imports/<int:import_id>/towns/stat/percentile/age', methods=['GET'])
 def get_town_stat(import_id):
-    town_stat = db_helper.get_town_stat(import_id)
-    if town_stat is None:
-        return Response(status=400)
+    try:
+        town_stat = db_helper.get_town_stat(import_id)
+    except DBHelperError as e:
+        return Response(response=str(e), status=400)
     else:
         return Response(response=json.dumps({'data': town_stat}),
                         status=200,
@@ -69,7 +72,8 @@ def get_town_stat(import_id):
 def save_logs(response):
     formatted_time = datetime.now().strftime('%H:%M:%S.%f')[:-3]
     values_for_logging = tuple(map(str, (formatted_time, request.path, response.status_code)))
-    logging.info("*".join(values_for_logging))
+    with open(logs_dir_path + date.today().strftime("%Y-%m-%d") + '.log', 'a') as log_file:
+        log_file.write("*".join(values_for_logging) + '\n')
     return response
 
 
