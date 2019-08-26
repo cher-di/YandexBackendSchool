@@ -327,7 +327,6 @@ class DBHelper(metaclass=Singleton):
         # check if patch_citizen_data have field "citizen_id" or not
         if 'citizen_id' in patch_citizen_data.keys():
             raise DBHelperJsonSchemaError
-        # NOTE временная заплата
 
         # get and change relatives, if patch_citizen_data contains relatives
         try:

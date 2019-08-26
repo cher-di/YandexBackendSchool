@@ -10,7 +10,7 @@
    - postgresql-server-dev-all
    
 2.Клонируем репозиторий на машину
-```shell script
+```console
 user@machine:~$ mkdir YandexBackendSchool
 user@machine:~$ cd YandexBackendSchool/
 user@machine:~/YandexBackendSchool$ git clone https://github.com/cher-di/YandexBackendSchool.git
@@ -22,7 +22,7 @@ user@machine:~/YandexBackendSchool$ git clone https://github.com/cher-di/YandexB
   - flask
   - numpy
   - gunicorn
-```shell script
+```console
 user@machine:~/YandexBackendSchool$ pip3 install virtualenv
 user@machine:~/YandexBackendSchool$ python3 -m venv ybs_venv
 user@machine:~/YandexBackendSchool$ source ybs_venv/bin/activate
@@ -31,7 +31,7 @@ user@machine:~/YandexBackendSchool$ source ybs_venv/bin/activate
 ```
 
 4.Создаем базу пользователя и базу данных:
-```shell script
+```console
 user@machine:~$ sudo -u postgres psql postgres
 ```
 ```postgresql
@@ -39,26 +39,26 @@ CREATE ROLE ybs_user LOGIN PASSWORD 'ybs_password' CREATEDB;
 CREATE DATABASE ybs_db WITH owner = ybs_user;
 ```
 
-5.Чтобы сгенерировать файл конфигурации */home/user/YandexBackendSchool/YandexBackendSchool/config.ini*, запускаем скрипт *config.py*:
-```shell script
-(ybs_venv) user@machine:~/YandexBackendSchool/YandexBackendSchool/scripts$ python3 config.py
+5.Чтобы сгенерировать файл конфигурации */home/user/YandexBackendSchool/YandexBackendSchool/config.ini*, запускаем скрипт *config.py* с режимом **g**:
+```console
+(ybs_venv) user@machine:~/YandexBackendSchool/YandexBackendSchool/scripts$ python3 config.py g
 ```
 После того, как файл конфигурации будет сгенерирован, записываем в него верные значения вместо значений по умолчанию.
 
-6.Запускаем скрипт проверки конфигурации *test_configuration.py*:
-```shell script
-(ybs_venv) user@machine:~/YandexBackendSchool/YandexBackendSchool/scripts$ python3 test_configuration.py
+6.Проверяем конфигурацию - запускаем скрипт *config.py* c режимом **t**:
+```console
+(ybs_venv) user@machine:~/YandexBackendSchool/YandexBackendSchool/scripts$ python3 config.py t
 ```
 Если результат исполнения скрипта выдал везде **OK**, то можно приступать к следующему шагу.  
 В противном случае скрипт выдаст ошибку **FAIL**.
 
 7.Тестируем сервер:
-```shell script
+```console
 (ybs_venv) user@machine:~/YandexBackendSchool/YandexBackendSchool/scripts$ gunicorn -c gunicorn_configuration.py server:app
 ```
 Если все нормально, то переходим к следующему шагу.  
 Не забываем отключить виртуальное окружение:
-```shell script
+```console
 (ybs_venv) user@machine:~/YandexBackendSchool/YandexBackendSchool/scripts$ deactivate
 ```
 8.Создаем файл */etc/systemd/system/ybs.service*, для запуска демона нашего приложения:
@@ -76,7 +76,7 @@ ExecStart=/home/user/YandexBackendSchool/ybs_venv/bin/gunicorn -c gunicorn_confi
 WantedBy=multi-user.target
 ```
 9.Запускаем демона и делаем его автозапускаемым при запуске машины
-```shell script
+```console
 user@machine:~$ sudo systemctl daemon-reload
 user@machine:~$ sudo systemctl start ybs
 user@machine:~$ sudo systemctl enable ybs
