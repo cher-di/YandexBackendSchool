@@ -16,7 +16,7 @@ user@machine:~$ cd YandexBackendSchool/
 user@machine:~/YandexBackendSchool$ git clone https://github.com/cher-di/YandexBackendSchool.git
 ```
 
-3.Создаем вирутальное окржение Python и устанавливаем в него все необходимые модули:
+3.Создаем вирутальное окружение Python и устанавливаем в него все необходимые модули:
   - psycopg2
   - fastjsonschema
   - flask
@@ -30,7 +30,7 @@ user@machine:~/YandexBackendSchool$ source ybs_venv/bin/activate
 (ybs_venv) user@machine:~/YandexBackendSchool$ pip3 install psycopg2 fastjsonschema flask numpy gunicorn
 ```
 
-4.Создаем базу пользователя и базу данных:
+4.Создаем пользователя и базу данных:
 ```console
 user@machine:~$ sudo -u postgres psql postgres
 ```
@@ -39,9 +39,9 @@ CREATE ROLE ybs_user LOGIN PASSWORD 'ybs_password' CREATEDB;
 CREATE DATABASE ybs_db WITH owner = ybs_user;
 ```
 
-5.Чтобы сгенерировать файл конфигурации */home/user/YandexBackendSchool/YandexBackendSchool/config.ini*, запускаем скрипт *config.py* с режимом **g**:
+5.Чтобы сгенерировать файл конфигурации */home/user/YandexBackendSchool/YandexBackendSchool/config.ini*, запускаем скрипт *config.py* с ключом **с**:
 ```console
-(ybs_venv) user@machine:~/YandexBackendSchool/YandexBackendSchool/scripts$ python3 config.py g
+(ybs_venv) user@machine:~/YandexBackendSchool/YandexBackendSchool/scripts$ python3 config.py с
 ```
 После того, как файл конфигурации будет сгенерирован, записываем в него верные значения вместо значений по умолчанию.
 
@@ -67,7 +67,7 @@ CREATE DATABASE ybs_db WITH owner = ybs_user;
 Description=Gunicorn instance to server YandexBackendSchoolApp
 After=network.target
 [Service]
-User=dmitry
+User=user
 Group=www-data
 WorkingDirectory=/home/user/YandexBackendSchool/YandexBackendSchool/scripts
 Environment="PATH=/home/user/YandexBackendSchool/ybs_venv/bin"
@@ -84,9 +84,9 @@ user@machine:~$ sudo systemctl enable ybs
 После этого сервер развернут и готов к работе
 
 ## Запуск *.sql файлов в терминале
-Чтобы запустить *\*.sql* файлы в терминале, необходимо открыть терминал в папке *sql_files/* и ввести следующую команду 
+Чтобы запустить *\*.sql* файлы в терминале, необходимо запустить следующую команду: 
 ```console 
-user@machine:~$ psql -h localhost -d ybs_rest_db -U ybs_rest_user -p 5432 -a -q -f sql_file.sql
+user@machine:~$ psql -h 127.0.0.1 -d ybs_db -U ybs_user -p 5432 -f sql_file.sql
 ```
 > Для создания таблиц необходимо использовать соотвественно: *create_tables.sql*  
 > Для полной очистки базы данных (удаление всех данных и таблиц): *clear_databse.sql*  
